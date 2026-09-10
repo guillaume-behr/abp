@@ -72,3 +72,68 @@ ABP_TEST(json_rejects_malformed_input) {
     }
     ABP_CHECK(threw);
 }
+
+ABP_TEST(json_rejects_deeply_nested_input_instead_of_crashing) {
+    // Each nested container costs a stack frame in the recursive-descent
+    // parser, so an unbounded nest used to segfault rather than fail.
+    std::string deep(100000, '[');
+    bool threw = false;
+    try {
+        JsonValue::parse(deep);
+    } catch (const abp::json::JsonParseError&) {
+        threw = true;
+    }
+    ABP_CHECK(threw);
+}
+
+ABP_TEST(json_accepts_reasonable_nesting) {
+    std::string doc;
+    const int depth = 50;
+    for (int i = 0; i < depth; ++i) doc += "[";
+    doc += "1";
+    for (int i = 0; i < depth; ++i) doc += "]";
+
+    JsonValue parsed = JsonValue::parse(doc);
+    ABP_CHECK(parsed.isArray());
+}
+
+ABP_TEST(json_decodes_surrogate_pairs_as_one_code_point) {
+    // U+1F600 GRINNING FACE arrives as the pair \uD83D\uDE00 and must come out
+    // as its 4-byte UTF-8 encoding, not as two 3-byte lone surrogates.
+    JsonValue parsed = JsonValue::parse("{\"s\":\"\\ud83d\\ude00\"}");
+    const std::string s = parsed.get("s").asString();
+    ABP_CHECK_EQ(s.size(), 4u);
+    ABP_CHECK_EQ(s, "\xf0\x9f\x98\x80");
+}
+
+ABP_TEST(json_replaces_unpaired_surrogates) {
+    // A lone surrogate has no UTF-8 encoding; U+FFFD keeps the output valid.
+    JsonValue parsed = JsonValue::parse("{\"s\":\"\\ud83d\"}");
+    ABP_CHECK_EQ(parsed.get("s").asString(), "\xef\xbf\xbd");
+}
+
+ABP_TEST(json_decodes_basic_multilingual_plane_escapes) {
+    ABP_CHECK_EQ(JsonValue::parse("{\"s\":\"\\u0041\"}").get("s").asString(), "A");
+    ABP_CHECK_EQ(JsonValue::parse("{\"s\":\"\\u00e9\"}").get("s").asString(), "\xc3\xa9");
+    ABP_CHECK_EQ(JsonValue::parse("{\"s\":\"\\u20ac\"}").get("s").asString(), "\xe2\x82\xac");
+}
+
+ABP_TEST(json_rejects_truncated_literals) {
+    // matchLiteral used to index past the end of the buffer for these.
+    for (const char* bad : {"tru", "fals", "nul", "t", "n"}) {
+        bool threw = false;
+        try {
+            JsonValue::parse(bad);
+        } catch (const abp::json::JsonParseError&) {
+            threw = true;
+        }
+        ABP_CHECK(threw);
+    }
+}
+
+ABP_TEST(json_round_trips_non_ascii_text) {
+    JsonValue obj = JsonValue::makeObject();
+    obj.set("model", "Pixel \xf0\x9f\x98\x80 Pro");
+    JsonValue parsed = JsonValue::parse(obj.dump());
+    ABP_CHECK_EQ(parsed.get("model").asString(), "Pixel \xf0\x9f\x98\x80 Pro");
+}

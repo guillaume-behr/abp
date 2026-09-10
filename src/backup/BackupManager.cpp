@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <ctime>
 #include <memory>
+#include <system_error>
 
 #include "abp/AdbClient.h"
 #include "abp/FsUtil.h"
@@ -39,6 +40,22 @@ std::vector<PackageInfo> filterPackages(std::vector<PackageInfo> all, const Back
         if (contains(options.excludePackages, pkg.name)) continue;
         result.push_back(std::move(pkg));
     }
+
+    // Silently backing up nothing because of a typo in --only is worse than
+    // saying so: warn about every requested name that matched no package.
+    for (const auto& requested : options.onlyPackages) {
+        bool matched = false;
+        for (const auto& pkg : result) {
+            if (pkg.name == requested) {
+                matched = true;
+                break;
+            }
+        }
+        if (!matched) {
+            Logger::warn("Requested package '" + requested +
+                          "' is not installed on this device (or was excluded); skipping it.");
+        }
+    }
     return result;
 }
 
@@ -71,6 +88,11 @@ void extractApks(const AdbClient& adb, const fs::path& outDir, const std::vector
         if (!localFiles.empty()) {
             entry->apkIncluded = true;
             entry->apkFiles = std::move(localFiles);
+            if (anyFailed) {
+                // Some splits came across and some did not. Reinstalling an
+                // incomplete split set fails, so this must not look clean.
+                entry->error = "only some APK files could be pulled; the APK set is incomplete";
+            }
         } else if (anyFailed) {
             entry->error = "failed to pull APK file(s) from device";
         }
@@ -150,7 +172,14 @@ BackupSummary BackupManager::runBackup(const BackupOptions& options) {
         return summary;
     }
 
+    std::error_code existingEc;
+    if (fs::exists(options.outputDir / "manifest.json", existingEc)) {
+        Logger::warn("'" + options.outputDir.string() +
+                      "' already contains a backup; its manifest and any same-named archives will be overwritten.");
+    }
+
     Manifest manifest;
+    manifest.formatVersion = kManifestFormatVersion;
     manifest.abpVersion = kVersionString;
     manifest.createdAtUtc = currentUtcTimestamp();
     manifest.mode = backend->name();
@@ -159,6 +188,18 @@ BackupSummary BackupManager::runBackup(const BackupOptions& options) {
     Logger::info("Enumerating installed packages...");
     std::vector<PackageInfo> packages = filterPackages(adb.listPackages(options.includeSystemApps), options);
     Logger::info("Found " + std::to_string(packages.size()) + " package(s) to back up.");
+
+    if (packages.empty()) {
+        summary.messages.push_back("No packages matched the current selection, so there is nothing to back up. "
+                                    "Check --only/--exclude, or pass --system to include system apps.");
+        return summary;
+    }
+
+    if (options.includeApks) {
+        // Split APKs need `pm path`; resolve them for the selected packages
+        // only, in one on-device pass.
+        adb.resolveApkPaths(packages);
+    }
 
     for (const auto& pkg : packages) {
         PackageBackupEntry entry;
@@ -182,18 +223,27 @@ BackupSummary BackupManager::runBackup(const BackupOptions& options) {
         summary.sharedStorageIncluded = backend->backupSharedStorage(adb, options.outputDir, manifest);
     }
 
-    manifest.writeToFile(options.outputDir / "manifest.json");
+    // The manifest is what makes the directory a restorable backup, so a
+    // failure to write it fails the whole run rather than escaping as an
+    // uncaught exception after all the data has been transferred.
+    try {
+        manifest.writeToFile(options.outputDir / "manifest.json");
+    } catch (const std::exception& e) {
+        summary.messages.push_back(std::string("Backup data was captured, but writing manifest.json failed: ") +
+                                    e.what() + ". Without it the backup cannot be restored.");
+        return summary;
+    }
 
-    summary.success = true;
     summary.mode = manifest.mode;
     summary.packageCount = static_cast<int>(manifest.packages.size());
-    unsigned long long totalBytes = manifest.sharedStorageArchiveBytes;
     for (const auto& entry : manifest.packages) {
         if (entry.dataIncluded) ++summary.packagesWithData;
         if (!entry.error.empty()) ++summary.packagesWithErrors;
-        totalBytes += entry.dataArchiveBytes + entry.externalDataArchiveBytes;
     }
-    summary.totalBytes = totalBytes;
+    // Measure the directory rather than summing the manifest's archive sizes:
+    // that way APKs and the legacy .ab file are counted too.
+    summary.totalBytes = fsutil::directorySize(options.outputDir);
+    summary.success = true;
     return summary;
 }
 
@@ -223,6 +273,18 @@ RestoreSummary BackupManager::runRestore(const RestoreOptions& options) {
         return summary;
     }
 
+    if (manifest.formatVersion > kManifestFormatVersion) {
+        summary.messages.push_back(
+            "This backup uses manifest format version " + std::to_string(manifest.formatVersion) + ", but abp " +
+            kVersionString + " only understands up to version " + std::to_string(kManifestFormatVersion) +
+            ". Upgrade abp rather than risk misreading a newer backup.");
+        return summary;
+    }
+    if (manifest.formatVersion < 1) {
+        summary.messages.push_back("manifest.json has no usable format_version; it does not look like an abp backup.");
+        return summary;
+    }
+
     Logger::info("Loaded backup: " + std::to_string(manifest.packages.size()) + " package(s), mode=" + manifest.mode +
                  ", captured " + manifest.createdAtUtc);
 
@@ -238,10 +300,27 @@ RestoreSummary BackupManager::runRestore(const RestoreOptions& options) {
                   : std::unique_ptr<IBackupBackend>(std::make_unique<StandardBackend>());
 
     std::vector<std::string> selectedNames;
-    for (const auto& entry : manifest.packages) {
+    for (auto& entry : manifest.packages) {
         if (!options.onlyPackages.empty() && !contains(options.onlyPackages, entry.name)) continue;
         if (contains(options.excludePackages, entry.name)) continue;
         selectedNames.push_back(entry.name);
+        // `error` currently holds whatever went wrong at *backup* time. The
+        // restore steps below reuse the field, so clear it first -- otherwise
+        // the summary reports old backup failures as restore failures.
+        entry.error.clear();
+    }
+
+    for (const auto& requested : options.onlyPackages) {
+        if (!contains(selectedNames, requested)) {
+            Logger::warn("Requested package '" + requested +
+                          "' is not present in this backup (or was excluded); skipping it.");
+        }
+    }
+
+    if (selectedNames.empty()) {
+        summary.messages.push_back("No packages in this backup matched the current selection. "
+                                    "Check --only/--exclude.");
+        return summary;
     }
 
     if (options.includeApks) {

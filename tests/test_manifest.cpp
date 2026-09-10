@@ -67,3 +67,49 @@ ABP_TEST(manifest_find_package_entry) {
     const Manifest& constManifest = manifest;
     ABP_CHECK(findPackageEntry(constManifest, "com.example.app") != nullptr);
 }
+
+ABP_TEST(manifest_defaults_are_written_and_read_back) {
+    Manifest empty;
+    Manifest parsed = Manifest::fromJson(empty.toJson());
+
+    ABP_CHECK_EQ(parsed.formatVersion, 1);
+    ABP_CHECK_EQ(parsed.packages.size(), 0u);
+    ABP_CHECK(!parsed.sharedStorageIncluded);
+    ABP_CHECK(!parsed.device.isRooted());
+}
+
+ABP_TEST(manifest_preserves_the_format_version) {
+    Manifest manifest;
+    manifest.formatVersion = 7;
+    ABP_CHECK_EQ(Manifest::fromJson(manifest.toJson()).formatVersion, 7);
+
+    // A manifest with no format_version at all reads as version 1.
+    ABP_CHECK_EQ(Manifest::fromJson("{}").formatVersion, 1);
+}
+
+ABP_TEST(manifest_preserves_large_archive_sizes) {
+    // Sizes travel through JSON as doubles; a multi-gigabyte shared storage
+    // capture must still round-trip exactly.
+    Manifest manifest;
+    manifest.sharedStorageArchiveBytes = 8589934592ULL; // 8 GiB
+    ABP_CHECK_EQ(Manifest::fromJson(manifest.toJson()).sharedStorageArchiveBytes, 8589934592ULL);
+}
+
+ABP_TEST(manifest_rejects_malformed_json) {
+    bool threw = false;
+    try {
+        Manifest::fromJson("{ this is not json");
+    } catch (const std::exception&) {
+        threw = true;
+    }
+    ABP_CHECK(threw);
+}
+
+ABP_TEST(manifest_round_trips_every_root_method) {
+    for (RootMethod method : {RootMethod::None, RootMethod::SuBinary, RootMethod::AdbdRoot}) {
+        Manifest manifest;
+        manifest.device.root.method = method;
+        Manifest parsed = Manifest::fromJson(manifest.toJson());
+        ABP_CHECK(parsed.device.root.method == method);
+    }
+}

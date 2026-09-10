@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [master]
   pull_request:
 
 jobs:
@@ -33,3 +33,26 @@ jobs:
 
       - name: Test
         run: ctest --test-dir build --output-on-failure
+
+  sanitizers:
+    # abp does its own fork/exec, fd juggling and SHA-256 block handling, so
+    # the unit tests are also run under ASan/UBSan to catch what -Wall cannot.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        env:
+          CC: gcc
+          CXX: g++
+        run: |
+          cmake -B build-asan \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DABP_WARNINGS_AS_ERRORS=ON \
+            -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=undefined"
+
+      - name: Build
+        run: cmake --build build-asan -j"$(nproc)"
+
+      - name: Test
+        run: ctest --test-dir build-asan --output-on-failure

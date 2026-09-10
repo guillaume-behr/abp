@@ -26,6 +26,31 @@ public:
 private:
     const std::string& text_;
     size_t pos_ = 0;
+    int depth_ = 0;
+
+    /// parseValue() recurses for every nested array/object, so an input of
+    /// "[[[[..." deep enough would overflow the stack before any error could
+    /// be reported. Manifests nest three levels; 200 is far past anything
+    /// legitimate and keeps hostile input a clean parse error instead of a
+    /// crash.
+    static constexpr int kMaxDepth = 200;
+
+    /// Increments the nesting depth for as long as it is in scope.
+    class DepthGuard {
+    public:
+        explicit DepthGuard(Parser& parser) : parser_(parser) {
+            if (++parser_.depth_ > kMaxDepth) {
+                parser_.fail("maximum nesting depth exceeded");
+            }
+        }
+        ~DepthGuard() { --parser_.depth_; }
+
+        DepthGuard(const DepthGuard&) = delete;
+        DepthGuard& operator=(const DepthGuard&) = delete;
+
+    private:
+        Parser& parser_;
+    };
 
     [[noreturn]] void fail(const std::string& message) const {
         throw JsonParseError("JSON parse error at offset " + std::to_string(pos_) + ": " + message);
@@ -68,6 +93,7 @@ private:
 
     bool matchLiteral(const char* literal) {
         size_t len = std::strlen(literal);
+        if (pos_ + len > text_.size()) return false;
         if (text_.compare(pos_, len, literal) == 0) {
             pos_ += len;
             return true;
@@ -97,6 +123,7 @@ private:
     }
 
     JsonValue parseObject() {
+        DepthGuard guard(*this);
         expect('{');
         JsonValue obj = JsonValue::makeObject();
         skipWhitespace();
@@ -118,6 +145,7 @@ private:
     }
 
     JsonValue parseArray() {
+        DepthGuard guard(*this);
         expect('[');
         JsonValue arr = JsonValue::makeArray();
         skipWhitespace();
@@ -152,6 +180,21 @@ private:
                     case 't': result.push_back('\t'); break;
                     case 'u': {
                         unsigned int codepoint = parseHex4();
+                        // A code point above the BMP arrives as a UTF-16
+                        // surrogate pair. Encoding each half on its own would
+                        // emit CESU-8, which is not valid UTF-8, so the pair
+                        // is recombined here.
+                        if (codepoint >= 0xD800 && codepoint <= 0xDBFF && pos_ + 1 < text_.size() &&
+                            text_[pos_] == '\\' && text_[pos_ + 1] == 'u') {
+                            size_t savedPos = pos_;
+                            pos_ += 2;
+                            unsigned int low = parseHex4();
+                            if (low >= 0xDC00 && low <= 0xDFFF) {
+                                codepoint = 0x10000 + ((codepoint - 0xD800) << 10) + (low - 0xDC00);
+                            } else {
+                                pos_ = savedPos; // Not a low surrogate; leave it for the next round.
+                            }
+                        }
                         appendUtf8(result, codepoint);
                         break;
                     }
@@ -179,13 +222,24 @@ private:
     }
 
     static void appendUtf8(std::string& out, unsigned int codepoint) {
+        // An unpaired surrogate has no UTF-8 encoding; emit U+FFFD so the
+        // result is always well-formed text.
+        if (codepoint >= 0xD800 && codepoint <= 0xDFFF) {
+            codepoint = 0xFFFD;
+        }
+
         if (codepoint <= 0x7F) {
             out.push_back(static_cast<char>(codepoint));
         } else if (codepoint <= 0x7FF) {
             out.push_back(static_cast<char>(0xC0 | (codepoint >> 6)));
             out.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
-        } else {
+        } else if (codepoint <= 0xFFFF) {
             out.push_back(static_cast<char>(0xE0 | (codepoint >> 12)));
+            out.push_back(static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F)));
+            out.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
+        } else {
+            out.push_back(static_cast<char>(0xF0 | (codepoint >> 18)));
+            out.push_back(static_cast<char>(0x80 | ((codepoint >> 12) & 0x3F)));
             out.push_back(static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F)));
             out.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
         }

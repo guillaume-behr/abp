@@ -12,11 +12,14 @@ something goes wrong.
    running as root (typical of `userdebug`/`eng` builds, or after
    `adb root` on a device that allows it). No `su` is needed for
    anything; commands run directly.
-2. `adb shell which su` (falling back to `command -v su`) to find a
+2. `adb shell command -v su` (falling back to `which su`) to find a
    `su` binary reachable from the shell user (Magisk, KernelSU, and
    most other root solutions expose one this way).
-3. `adb shell su -c id -u` — if this prints `0`, `abp` uses
-   `su -c '<command>'` to run privileged commands. **This step may
+3. `adb shell su -c 'id -u'` — if this prints `0`, `abp` uses
+   `su -c '<command>'` to run privileged commands. The command is
+   always passed as a single quoted argument, because several `su`
+   implementations otherwise treat only its first word as the command.
+   **This step may
    trigger an on-device Superuser permission prompt** (Magisk's grant
    dialog, etc.) the first time; you'll need to approve it there.
 
@@ -66,22 +69,30 @@ then be unable to read its own data.
 2. Making sure the APK is (re)installed first (`BackupManager` always
    installs APKs before restoring data), so the OS has already created
    a fresh, empty `/data/data/<pkg>` owned by the *current* UID.
-3. Recording that current ownership: `stat -c '%u:%g' /data/data/<pkg>`.
-4. Extracting the archive: `tar -xzf - -C /data/data`, streamed from the
+3. `am force-stop <pkg>`, so the app is not running while its own data
+   directory is replaced underneath it. A live process would otherwise
+   see a half-old, half-new view of its files and could write over the
+   restored data from its in-memory state.
+4. Recording that current ownership: `stat -c '%u:%g' /data/data/<pkg>`.
+5. Extracting the archive: `tar -xzf - -C /data/data`, streamed from the
    local file via `adb shell ... < file` (the file's contents become
    the remote command's stdin).
-5. `chown -R <uid>:<gid> /data/data/<pkg>` back to the UID captured in
-   step 3, undoing whatever ownership `tar -x` (running as root) just
+6. `chown -R <uid>:<gid> /data/data/<pkg>` back to the UID captured in
+   step 4, undoing whatever ownership `tar -x` (running as root) just
    set from the archive.
-6. `restorecon -R /data/data/<pkg>` to fix up SELinux security contexts,
+7. `restorecon -R /data/data/<pkg>` to fix up SELinux security contexts,
    which `tar` also doesn't preserve/regenerate correctly across a
    restore onto a different inode set.
 
-If step 3's `stat` fails (e.g. the app wasn't actually installed first),
+If step 4's `stat` fails (e.g. the app wasn't actually installed first),
 `abp` still extracts the archive but logs a warning: the data will be
 readable by root but may not be usable by the app until it's relaunched
 in a way that triggers Android to fix ownership itself (or until you
 `chown` it manually).
+
+If step 1's checksum does not match, that package is skipped entirely
+and recorded as failed — a truncated or corrupted archive is never
+unpacked over live app data.
 
 ## Restoring shared storage
 

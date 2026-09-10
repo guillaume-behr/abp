@@ -10,6 +10,33 @@
 
 namespace abp {
 namespace fs = std::filesystem;
+namespace {
+
+/// crypto::sha256HexFile throws if the file cannot be read. Checksumming is
+/// an integrity aid, not the point of the backup, so a failure here degrades
+/// to "no checksum recorded" instead of aborting the run.
+std::string checksumOrEmpty(const fs::path& path) {
+    try {
+        return crypto::sha256HexFile(path.string());
+    } catch (const std::exception& e) {
+        Logger::warn("Could not checksum " + path.string() + ": " + e.what());
+        return std::string();
+    }
+}
+
+/// Compares a file against a recorded checksum. An unreadable file counts as
+/// a mismatch: restoring from something we cannot verify is the risk the
+/// checksum exists to prevent.
+bool checksumMatches(const fs::path& path, const std::string& expected) {
+    if (expected.empty()) return true; // Nothing recorded to check against.
+    try {
+        return crypto::sha256HexFile(path.string()) == expected;
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
+} // namespace
 
 RootBackend::RootBackend(RootAccess rootAccess) : rootAccess_(rootAccess) {}
 
@@ -62,7 +89,7 @@ void RootBackend::backupAppData(const AdbClient& adb, const fs::path& outDir,
         entry->dataIncluded = true;
         entry->dataArchive = (fs::path("data") / fileName).generic_string();
         entry->dataArchiveBytes = size;
-        entry->dataArchiveSha256 = crypto::sha256HexFile(localPath.string());
+        entry->dataArchiveSha256 = checksumOrEmpty(localPath);
     }
 }
 
@@ -85,11 +112,15 @@ void RootBackend::restoreAppData(const AdbClient& adb, const fs::path& backupDir
             continue;
         }
 
-        if (!entry.dataArchiveSha256.empty() &&
-            crypto::sha256HexFile(archivePath.string()) != entry.dataArchiveSha256) {
+        if (!checksumMatches(archivePath, entry.dataArchiveSha256)) {
             entry.error = "checksum mismatch for data archive, refusing to restore";
             continue;
         }
+
+        // Stop the app first: extracting over the data directory of a running
+        // process leaves it with a half-old, half-new view of its own files,
+        // and anything it writes afterwards can clobber the restore.
+        adb.shell(asRoot("am force-stop " + entry.name + " 2>/dev/null"));
 
         // Snapshot the UID/GID the package manager just assigned to this
         // (freshly (re)installed, empty) app before we overwrite its data
@@ -135,7 +166,7 @@ bool RootBackend::backupSharedStorage(const AdbClient& adb, const fs::path& outD
     manifest.sharedStorageIsDirectory = false;
     manifest.sharedStorageArchive = "shared_storage.tar";
     manifest.sharedStorageArchiveBytes = size;
-    manifest.sharedStorageArchiveSha256 = crypto::sha256HexFile(localPath.string());
+    manifest.sharedStorageArchiveSha256 = checksumOrEmpty(localPath);
     return true;
 }
 
@@ -145,8 +176,13 @@ bool RootBackend::restoreSharedStorage(const AdbClient& adb, const fs::path& bac
     fs::path archivePath = backupDir / manifest.sharedStorageArchive;
     if (!fs::exists(archivePath)) return false;
 
-    if (!manifest.sharedStorageArchiveSha256.empty() &&
-        crypto::sha256HexFile(archivePath.string()) != manifest.sharedStorageArchiveSha256) {
+    if (manifest.sharedStorageIsDirectory) {
+        Logger::error("This backup's shared storage is a pulled directory tree, not a tar archive; "
+                      "it cannot be restored through the root backend.");
+        return false;
+    }
+
+    if (!checksumMatches(archivePath, manifest.sharedStorageArchiveSha256)) {
         Logger::error("Checksum mismatch for shared storage archive, refusing to restore.");
         return false;
     }

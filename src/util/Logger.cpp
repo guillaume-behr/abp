@@ -6,7 +6,20 @@
 namespace abp {
 namespace {
 bool g_verbose = false;
-bool g_colorEnabled = isatty(fileno(stderr)) != 0;
+
+/// Tri-state: unset means "decide per stream from isatty", which keeps escape
+/// codes out of a redirected stdout even while stderr is still a terminal.
+enum class ColorSetting { Auto, Always, Never };
+ColorSetting g_colorSetting = ColorSetting::Auto;
+
+bool colorEnabledFor(FILE* stream) {
+    switch (g_colorSetting) {
+        case ColorSetting::Always: return true;
+        case ColorSetting::Never: return false;
+        case ColorSetting::Auto: break;
+    }
+    return isatty(fileno(stream)) != 0;
+}
 
 const char* levelColor(LogLevel level) {
     switch (level) {
@@ -30,7 +43,9 @@ const char* levelLabel(LogLevel level) {
 } // namespace
 
 void Logger::setVerbose(bool verbose) { g_verbose = verbose; }
-void Logger::setColorEnabled(bool enabled) { g_colorEnabled = enabled; }
+void Logger::setColorEnabled(bool enabled) {
+    g_colorSetting = enabled ? ColorSetting::Always : ColorSetting::Never;
+}
 
 void Logger::log(LogLevel level, const std::string& message) {
     if (level == LogLevel::Debug && !g_verbose) {
@@ -40,7 +55,7 @@ void Logger::log(LogLevel level, const std::string& message) {
     FILE* stream = (level == LogLevel::Warn || level == LogLevel::Error) ? stderr : stdout;
     const bool prefixed = level != LogLevel::Info;
 
-    if (g_colorEnabled) {
+    if (colorEnabledFor(stream)) {
         if (prefixed) {
             std::fprintf(stream, "%s[%s]\033[0m %s\n", levelColor(level), levelLabel(level), message.c_str());
         } else {

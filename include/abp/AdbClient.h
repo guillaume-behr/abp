@@ -80,10 +80,17 @@ public:
 
     DeviceInfo queryDeviceInfo() const;
 
-    /// Enumerates installed packages via `pm list packages`. When
+    /// Enumerates installed packages via `pm list packages -f`. When
     /// `includeSystemApps` is false, only third-party (`-3`) packages are
-    /// returned. Each PackageInfo's apkPaths is populated via `pm path`.
+    /// returned. Each PackageInfo's apkPaths holds just the base APK; call
+    /// resolveApkPaths() to fill in split APKs for the ones you need.
     std::vector<PackageInfo> listPackages(bool includeSystemApps) const;
+
+    /// Fills in the complete APK set (base + splits) for `packages`, using a
+    /// single on-device shell invocation rather than one `pm path` round trip
+    /// per package. Packages the device does not answer for keep whatever
+    /// listPackages() already found.
+    void resolveApkPaths(std::vector<PackageInfo>& packages) const;
 
     /// Returns every APK path (base + splits) for one installed package.
     std::vector<std::string> packageApkPaths(const std::string& packageName) const;

@@ -64,7 +64,15 @@ Thin, typed wrapper over the `adb` command-line tool: `shell`,
 stdout straight to a local file), `shellFromFile` (stream a local file
 into a device command's stdin), plus the legacy `backupToFile`/
 `restoreFromFile`. It also does device/package enumeration (`adb devices
--l`, `pm list packages`, `pm path`) and root detection.
+-l`, `pm list packages -f`, `pm path`) and root detection.
+
+Package enumeration is deliberately split in two. `listPackages()` makes
+a single `pm list packages -f` call, which yields every package name plus
+its *base* APK. Split APKs need `pm path`, so `resolveApkPaths()` batches
+those lookups into one on-device shell loop and is called only for the
+packages actually being backed up — asking per package would cost one
+adb round trip each, which is tens of seconds on a device with a few
+hundred apps.
 
 `AdbClient::shell()` takes a single, already-quoted command string (see
 `StringUtil::shellQuote`), rather than an argv array, because that's what

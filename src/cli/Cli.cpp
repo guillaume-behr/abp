@@ -2,6 +2,7 @@
 
 #include <cstdlib>
 #include <iostream>
+#include <ostream>
 
 #include "abp/AdbClient.h"
 #include "abp/BackupManager.h"
@@ -23,11 +24,13 @@ Usage:
   abp backup -o DIR [options]
   abp restore -i DIR [options]
   abp --help
-  abp --version
+  abp -V | --version
 
-Global options:
+Global options (accepted before or after the subcommand):
       --adb-path PATH     Use this adb executable instead of the one on PATH
                           (or set the ABP_ADB_PATH environment variable).
+  -v, --verbose           Print debug-level progress output.
+      --no-color          Disable coloured output (also honours NO_COLOR).
 
 Backup options:
   -s, --serial SERIAL     Target a specific device (see 'abp devices').
@@ -132,6 +135,7 @@ int cmdListPackages(const std::string& serial, bool includeSystem, bool asJson) 
         return 1;
     }
     auto packages = adb.listPackages(includeSystem);
+    adb.resolveApkPaths(packages); // Fill in split APKs so the counts below are real.
 
     if (asJson) {
         json::JsonValue arr = json::JsonValue::makeArray();
@@ -180,7 +184,6 @@ int cmdBackup(const std::vector<std::string>& args) {
         else if (arg == "--root") options.mode = BackupMode::Root;
         else if (arg == "--standard") options.mode = BackupMode::Standard;
         else if (arg == "-y" || arg == "--yes") options.assumeYes = true;
-        else if (arg == "-v" || arg == "--verbose") Logger::setVerbose(true);
         else {
             Logger::error("Unknown backup option: " + arg);
             return 2;
@@ -239,7 +242,6 @@ int cmdRestore(const std::vector<std::string>& args) {
         else if (arg == "--only") options.onlyPackages = splitCsv(value(arg.c_str()));
         else if (arg == "--exclude") options.excludePackages = splitCsv(value(arg.c_str()));
         else if (arg == "-y" || arg == "--yes") options.assumeYes = true;
-        else if (arg == "-v" || arg == "--verbose") Logger::setVerbose(true);
         else {
             Logger::error("Unknown restore option: " + arg);
             return 2;
@@ -283,21 +285,41 @@ int Cli::run(int argc, char** argv) {
     if (const char* envAdbPath = std::getenv("ABP_ADB_PATH")) {
         AdbClient::setAdbPath(envAdbPath);
     }
+    // https://no-color.org: any non-empty value disables colour.
+    if (const char* noColor = std::getenv("NO_COLOR")) {
+        if (noColor[0] != '\0') Logger::setColorEnabled(false);
+    }
+
+    // Pull the global options out of argv wherever they appear, so each
+    // subcommand's own parser only ever sees its own flags.
     for (size_t i = 0; i < args.size();) {
-        if (args[i] == "--adb-path" && i + 1 < args.size()) {
+        if (args[i] == "--adb-path") {
+            if (i + 1 >= args.size()) {
+                Logger::error("--adb-path requires a value");
+                return 2;
+            }
             AdbClient::setAdbPath(args[i + 1]);
             args.erase(args.begin() + static_cast<long>(i), args.begin() + static_cast<long>(i) + 2);
+        } else if (args[i] == "--no-color") {
+            Logger::setColorEnabled(false);
+            args.erase(args.begin() + static_cast<long>(i));
+        } else if (args[i] == "-v" || args[i] == "--verbose") {
+            Logger::setVerbose(true);
+            args.erase(args.begin() + static_cast<long>(i));
         } else {
             ++i;
         }
     }
 
     if (args.empty() || args[0] == "-h" || args[0] == "--help" || args[0] == "help") {
-        std::cout << kUsage;
+        // With no arguments at all this is a usage error, so it goes to stderr
+        // and exits non-zero; an explicit `--help` is a successful request.
+        std::ostream& out = args.empty() ? std::cerr : std::cout;
+        out << kUsage;
         return args.empty() ? 1 : 0;
     }
 
-    if (args[0] == "-v" || args[0] == "--version" || args[0] == "version") {
+    if (args[0] == "-V" || args[0] == "--version" || args[0] == "version") {
         std::cout << "abp " << kVersionString << "\n";
         return 0;
     }
@@ -306,21 +328,51 @@ int Cli::run(int argc, char** argv) {
         const std::string& command = args[0];
         std::vector<std::string> rest(args.begin() + 1, args.end());
 
-        if (command == "devices") return cmdDevices();
+        if (command == "devices") {
+            for (const auto& a : rest) {
+                // `-l` is accepted and ignored: abp always asks adb for the
+                // long listing, and it is what adb users reach for by habit.
+                if (a == "-l") continue;
+                Logger::error("Unknown devices option: " + a);
+                return 2;
+            }
+            return cmdDevices();
+        }
 
         std::string serial;
         for (size_t i = 0; i < rest.size(); ++i) {
-            if ((rest[i] == "-s" || rest[i] == "--serial") && i + 1 < rest.size()) serial = rest[i + 1];
+            if (rest[i] != "-s" && rest[i] != "--serial") continue;
+            if (i + 1 >= rest.size()) {
+                Logger::error(rest[i] + " requires a value");
+                return 2;
+            }
+            serial = rest[i + 1];
         }
 
-        if (command == "info") return cmdInfo(serial);
+        if (command == "info") {
+            for (size_t i = 0; i < rest.size(); ++i) {
+                if (rest[i] == "-s" || rest[i] == "--serial") {
+                    ++i; // Value already collected above.
+                    continue;
+                }
+                Logger::error("Unknown info option: " + rest[i]);
+                return 2;
+            }
+            return cmdInfo(serial);
+        }
 
         if (command == "list-packages") {
             bool includeSystem = false;
             bool asJson = false;
-            for (const auto& a : rest) {
+            for (size_t i = 0; i < rest.size(); ++i) {
+                const std::string& a = rest[i];
                 if (a == "--system") includeSystem = true;
-                if (a == "--json") asJson = true;
+                else if (a == "--json") asJson = true;
+                else if (a == "-s" || a == "--serial") ++i; // Value already collected above.
+                else {
+                    Logger::error("Unknown list-packages option: " + a);
+                    return 2;
+                }
             }
             return cmdListPackages(serial, includeSystem, asJson);
         }

@@ -2,14 +2,24 @@
 
 ## Global options
 
-These may appear before the subcommand:
+These may appear anywhere on the command line, before or after the
+subcommand:
 
 | Option              | Description                                                        |
 |----------------------|---------------------------------------------------------------------|
 | `--adb-path PATH`    | Use this `adb` executable instead of the one on `PATH`.            |
+| `-v, --verbose`      | Print debug-level log messages.                                    |
+| `--no-color`         | Disable coloured output.                                           |
 
-The same can be set via the `ABP_ADB_PATH` environment variable, which
-`--adb-path` overrides if both are given.
+`--adb-path` can also be set via the `ABP_ADB_PATH` environment variable,
+which `--adb-path` overrides if both are given.
+
+Colour is enabled automatically when the relevant stream is a terminal
+and disabled when it is redirected. Setting the `NO_COLOR` environment
+variable to any non-empty value turns it off, as does `--no-color`.
+
+`abp -V` / `abp --version` prints the version. (`-v` is *verbose*, as it
+is in most CLIs; use the capital `-V` for the version.)
 
 ## `abp devices`
 
@@ -61,7 +71,6 @@ useful for scripting `--only`/`--exclude` lists.
 | `--root`               | Require root; fail immediately if unavailable. |
 | `--standard`           | Force standard (non-root) mode even if root is available. |
 | `-y, --yes`            | Skip the confirmation prompt. |
-| `-v, --verbose`        | Print debug-level log messages. |
 
 Examples:
 
@@ -91,7 +100,6 @@ abp backup -o ~/backups/most --exclude com.chatty.app
 | `--only PKGS`          | Comma-separated package names to restore (root mode only — see below). |
 | `--exclude PKGS`       | Comma-separated package names to skip. |
 | `-y, --yes`            | Skip the confirmation prompt. |
-| `-v, --verbose`        | Print debug-level log messages. |
 
 There is no `--root`/`--standard` flag for restore: the backup's own
 `manifest.json` records which mode produced it, and that dictates how

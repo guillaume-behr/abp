@@ -97,18 +97,42 @@ bool StandardBackend::restoreSharedStorage(const AdbClient& adb, const fs::path&
     fs::path localDir = backupDir / manifest.sharedStorageArchive;
     if (!fs::exists(localDir) || !fs::is_directory(localDir)) return false;
 
+    if (!manifest.sharedStorageIsDirectory) {
+        Logger::error("This backup's shared storage is a tar archive captured in root mode; "
+                      "it cannot be restored through the standard backend.");
+        return false;
+    }
+
     Logger::info("Pushing shared storage back to /sdcard.");
 
     // Push each top-level entry individually so contents merge into the
     // existing /sdcard rather than nesting under /sdcard/shared_storage.
-    bool allOk = true;
     std::error_code ec;
-    for (const auto& entry : fs::directory_iterator(localDir, ec)) {
-        std::string remoteTarget = "/sdcard/" + entry.path().filename().string();
-        if (!adb.push(entry.path().string(), remoteTarget)) {
-            Logger::error("Failed to push " + entry.path().string() + " to " + remoteTarget);
-            allOk = false;
+    fs::directory_iterator it(localDir, ec);
+    if (ec) {
+        Logger::error("Could not read " + localDir.string() + ": " + ec.message());
+        return false;
+    }
+
+    bool allOk = true;
+    int pushed = 0;
+    for (const fs::directory_iterator end; it != end; it.increment(ec)) {
+        if (ec) {
+            Logger::error("Could not walk " + localDir.string() + ": " + ec.message());
+            return false;
         }
+        std::string remoteTarget = "/sdcard/" + it->path().filename().string();
+        if (!adb.push(it->path().string(), remoteTarget)) {
+            Logger::error("Failed to push " + it->path().string() + " to " + remoteTarget);
+            allOk = false;
+        } else {
+            ++pushed;
+        }
+    }
+
+    if (pushed == 0) {
+        Logger::warn("Shared storage directory " + localDir.string() + " is empty; nothing was pushed.");
+        return false;
     }
     return allOk;
 }
