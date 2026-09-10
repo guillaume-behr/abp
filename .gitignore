@@ -1,0 +1,19 @@
+build/
+build-*/
+cmake-build-*/
+
+*.o
+*.obj
+*.a
+*.so
+*.dylib
+*.exe
+
+# Editor/IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Local backup output some users create right in the repo checkout
+/backups/
