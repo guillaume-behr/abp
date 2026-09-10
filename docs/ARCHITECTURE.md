@@ -52,6 +52,14 @@ A small strategy interface (`backupAppData`, `restoreAppData`,
 - **StandardBackend** — the legacy `adb backup`/`adb restore` flow plus
   `adb pull`/`adb push` for shared storage.
 
+`StandardBackend` is itself a hybrid: it captures each debuggable package
+individually through `run-as` (same archive layout as root mode) and only
+falls back to the whole-device legacy `adb backup` for packages `run-as`
+cannot reach. Which one was used is recorded per package as
+`data_capture_method`, because restore has to dispatch on it — per-package
+archives restore selectively, the legacy archive does not. See
+[NON_ROOT_BACKUP.md](NON_ROOT_BACKUP.md).
+
 Both backends mutate a shared `Manifest`, which is what eventually gets
 serialized to `manifest.json`. Keeping backends manifest-aware (rather
 than returning some backend-specific result type) means `BackupManager`

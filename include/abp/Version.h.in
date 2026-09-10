@@ -6,6 +6,10 @@ inline constexpr const char* kVersionString = "@PROJECT_VERSION@";
 inline constexpr int kVersionMajor = @PROJECT_VERSION_MAJOR@;
 inline constexpr int kVersionMinor = @PROJECT_VERSION_MINOR@;
 inline constexpr int kVersionPatch = @PROJECT_VERSION_PATCH@;
-inline constexpr int kManifestFormatVersion = 1;
+/// Bumped to 2 when standard-mode backups gained per-package `run-as`
+/// archives: an abp that only understands version 1 would silently skip that
+/// data on restore, having no notion of per-package archives outside root
+/// mode. Version 1 manifests are still read.
+inline constexpr int kManifestFormatVersion = 2;
 
 } // namespace abp

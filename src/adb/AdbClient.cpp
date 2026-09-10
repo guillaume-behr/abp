@@ -304,6 +304,50 @@ std::vector<PackageInfo> AdbClient::listPackages(bool includeSystemApps) const {
     return result;
 }
 
+std::string AdbClient::asPackage(const std::string& packageName, const std::string& command) {
+    return "run-as " + strutil::shellQuote(packageName) + " " + command;
+}
+
+std::vector<std::string> AdbClient::packagesSupportingRunAs(const std::vector<std::string>& packageNames) const {
+    std::vector<std::string> supported;
+    if (packageNames.empty()) return supported;
+
+    // `run-as <pkg> id -u` succeeds only for a debuggable package that is
+    // installed for the current user. Probing them one at a time would cost an
+    // adb round trip each, so the whole probe runs as one on-device script
+    // that prints a marker line per package that answered.
+    static const char* kMarker = "@@abp-runas:";
+
+    std::string script;
+    script.reserve(packageNames.size() * 48);
+    for (const auto& name : packageNames) {
+        if (!strutil::isValidPackageName(name)) continue;
+        const std::string quoted = strutil::shellQuote(name);
+        script += "run-as " + quoted + " id -u >/dev/null 2>&1 && echo " +
+                  strutil::shellQuote(std::string(kMarker) + name) + "; ";
+    }
+    if (script.empty()) return supported;
+
+    bool ok = false;
+    const std::string output = shellText(script, &ok);
+    // The script's own exit status is that of its last command, which says
+    // nothing about the packages before it, so the output is parsed either way.
+
+    for (const auto& rawLine : strutil::split(output, '\n')) {
+        const std::string line = strutil::trim(rawLine);
+        if (!strutil::startsWith(line, kMarker)) continue;
+        std::string name = line.substr(std::strlen(kMarker));
+        // Only report back packages the caller actually asked about.
+        for (const auto& requested : packageNames) {
+            if (requested == name) {
+                supported.push_back(std::move(name));
+                break;
+            }
+        }
+    }
+    return supported;
+}
+
 void AdbClient::resolveApkPaths(std::vector<PackageInfo>& packages) const {
     if (packages.empty()) return;
 

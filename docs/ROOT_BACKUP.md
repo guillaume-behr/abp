@@ -24,7 +24,9 @@ something goes wrong.
    dialog, etc.) the first time; you'll need to approve it there.
 
 If neither works, `abp` falls back to standard mode (or fails, with
-`--root`).
+`--root`). Standard mode is not merely a degraded version of this one —
+it captures debuggable apps completely, via `run-as`. See
+[NON_ROOT_BACKUP.md](NON_ROOT_BACKUP.md).
 
 ## Backing up app data
 

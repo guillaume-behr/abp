@@ -49,6 +49,10 @@ files. `abp` gives you a single tool that:
 - 📂 On rooted devices, captures the **entire** private data directory of
   every app (not just what the app opted into), plus its full APK set
   (base + split APKs), plus all of shared storage.
+- 🔐 Without root, still captures debuggable apps' complete private data
+  through `run-as`, as proper per-app archives — falling back to the
+  legacy flow only for apps it cannot reach that way. See the
+  [coverage table](#-what-each-mode-can-save).
 - 🧾 Writes a single, versioned, human-readable `manifest.json` describing
   exactly what was captured, with SHA-256 checksums so a restore can
   detect a corrupted or truncated archive before touching the device.
@@ -64,7 +68,7 @@ files. `abp` gives you a single tool that:
 | 💾 **Full backup** | APKs (incl. split APKs), per-app private data, and shared storage — selectable independently. |
 | ♻️ **Full restore** | Reinstalls APKs, restores app data with UID remapping + SELinux relabeling, restores shared storage. |
 | 🔧 **Root backend** | Streams `tar` archives of each app's data directory (and of `/sdcard`) over `adb exec-out`/`shell` — never buffers large data in host memory. |
-| 📦 **Standard backend** | Public `adb backup`/`restore` + `adb pull`/`push` — no root required, works on any USB-debuggable device. |
+| 📦 **Standard backend** | No root required: per-app `tar` via `run-as` for debuggable apps, legacy `adb backup` for the rest, `adb pull`/`push` for shared storage. |
 | 🎯 **Selective ops** | `--only`, `--exclude`, `--no-apks`, `--no-data`, `--no-shared`, `--system`. |
 | ✅ **Integrity checking** | Every archive is SHA-256 checksummed at backup time and verified before it's written back to the device. |
 | 🔒 **No shell-injection surface** | Every device command is built from validated package names/paths — never raw string concatenation of untrusted input. |
@@ -72,6 +76,41 @@ files. `abp` gives you a single tool that:
 See [docs/ROOT_BACKUP.md](docs/ROOT_BACKUP.md) for exactly what root mode
 does on-device, and [docs/MANIFEST.md](docs/MANIFEST.md) for the backup
 directory layout and manifest schema.
+
+## 📊 What each mode can save
+
+`abp` picks the strongest mechanism available and tells you which one it
+used. Non-root mode is not one mechanism but three, chosen per app, so
+coverage varies app by app rather than all-or-nothing:
+
+| What | 🔓 Root mode | 🔐 Non-root, debuggable app | 🔐 Non-root, ordinary app |
+|---|---|---|---|
+| **APKs** (base + all splits) | ✅ Full | ✅ Full | ✅ Full |
+| **Private app data** (`/data/data/<pkg>`) | ✅ Complete, every app | ✅ Complete, via `run-as` | ⚠️ Only via legacy `adb backup` — see below |
+| **Shared storage** (`/sdcard`) | ✅ Single `tar` stream | ✅ `adb pull` tree | ✅ `adb pull` tree |
+| **Per-app archives** | ✅ One per package | ✅ One per package | ❌ One shared `.ab` archive |
+| **Selective restore** (`--only`/`--exclude`) | ✅ Per package | ✅ Per package | ❌ Archive restores as a whole |
+| **SHA-256 integrity check** | ✅ | ✅ | ❌ Not available for `adb backup` output |
+| **On-device confirmation needed** | ✅ None | ✅ None | ⚠️ Must tap "Back up my data" |
+| **Correct UID/SELinux on restore** | ✅ Remapped + `restorecon` | ✅ Inherent — `tar` runs as the app | ✅ Handled by Android |
+| **System apps** | ✅ With `--system` | ⚠️ APKs only (system apps are not debuggable) | ⚠️ APKs only |
+| **OS state** (Wi-Fi, accounts, settings) | ❌ Out of scope | ❌ Out of scope | ❌ Out of scope |
+
+**How an app lands in each non-root column.** `run-as` runs a command as
+an app's own UID, which Android permits only for apps built with
+`android:debuggable="true"` — your own debug builds, and a fair number of
+F-Droid and sideloaded apps. `abp` probes every selected package in one
+pass and captures whatever it can that way; everything left over falls
+back to legacy `adb backup`, which Google deprecated, which skips apps
+with `android:allowBackup="false"`, and which on Android 12+ skips app
+data unless the app explicitly opts in. If `run-as` covers every selected
+package, `abp` skips the legacy flow entirely — and with it the on-device
+prompt.
+
+Run `abp backup` and read the summary: it reports how many packages were
+captured by each mechanism, and `manifest.json` records a
+`data_capture_method` per package (`root_tar`, `run_as_tar`, or
+`legacy_adb_backup`) so you can tell exactly what you got.
 
 ## ⚙️ Requirements
 
@@ -166,12 +205,15 @@ abp backup -o ~/backups/quick --standard --no-shared
 abp backup -o ~/backups/subset --only com.example.one,com.example.two
 ```
 
-Standard-mode app-data backups use the legacy `adb backup` mechanism,
-which requires you to unlock the device and tap **"Back up my data"**
-when prompted; `abp` waits for that confirmation. It also only captures
-apps with `android:allowBackup="true"` — most modern apps opt out of
-this. Root mode has no such limitation and needs no on-device
-interaction.
+In standard (non-root) mode, `abp` first captures every app it can reach
+through `run-as` — that is, every app built with
+`android:debuggable="true"` — as a complete per-app archive, with no
+prompting. Only the apps left over fall back to the legacy `adb backup`
+mechanism, which requires you to unlock the device and tap **"Back up my
+data"** when prompted; `abp` waits for that confirmation. That legacy
+path only captures apps with `android:allowBackup="true"`, and on
+Android 12+ only those that explicitly opt in. Root mode has no such
+limitations. See [what each mode can save](#-what-each-mode-can-save).
 
 ### ♻️ Restoring
 
@@ -193,9 +235,14 @@ option reference and more examples.
 This is not a substitute for verified, tested backup software for
 anything you cannot afford to lose:
 
-- Standard mode's app-data capture depends entirely on `adb backup`,
-  which Google has deprecated and which most modern apps opt out of.
-  Treat it as "some data if you're lucky," not a full backup.
+- Standard mode captures ordinary (non-debuggable) apps only through
+  `adb backup`, which Google has deprecated and which most modern apps
+  opt out of. For those apps treat it as "some data if you're lucky,"
+  not a full backup — the [coverage table](#-what-each-mode-can-save)
+  spells out which apps get which treatment.
+- `run-as` capture depends on the app still being installed and still
+  debuggable at restore time; an app rebuilt as a release build cannot
+  have its `run_as_tar` archive restored.
 - Root-mode UID remapping assumes the app has already been (re)installed
   with a clean data directory before its archive is extracted; restoring
   onto a device where the package was never freshly installed may leave
@@ -213,6 +260,7 @@ anything you cannot afford to lose:
 | [docs/USAGE.md](docs/USAGE.md) | Full command/option reference, examples, troubleshooting. |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | How the code is layered. |
 | [docs/ROOT_BACKUP.md](docs/ROOT_BACKUP.md) | Exactly what root mode does on-device. |
+| [docs/NON_ROOT_BACKUP.md](docs/NON_ROOT_BACKUP.md) | The three mechanisms standard mode uses, and their limits. |
 | [docs/MANIFEST.md](docs/MANIFEST.md) | Backup directory layout and `manifest.json` schema. |
 
 ## 🤝 Contributing

@@ -8,6 +8,21 @@
 
 namespace abp {
 
+/// How a package's private data was captured. Recorded per package because a
+/// standard-mode backup mixes methods: debuggable apps are captured
+/// individually through `run-as`, and whatever is left falls back to the
+/// legacy whole-device `adb backup` archive.
+enum class DataCaptureMethod {
+    None,             ///< No private data was captured for this package.
+    RootTar,          ///< Per-package tar of /data/data/<pkg>, taken as root.
+    RunAsTar,         ///< Per-package tar taken as the app's own UID via `run-as`.
+    LegacyAdbBackup,  ///< Part of the shared legacy `adb backup` archive.
+};
+
+/// The manifest's string form of a DataCaptureMethod, and back.
+const char* dataCaptureMethodName(DataCaptureMethod method);
+DataCaptureMethod dataCaptureMethodFromName(const std::string& name);
+
 /// Per-package record of what was captured and where, stored in the
 /// manifest so a later restore knows exactly what to do (and a human can
 /// inspect the backup without running abp at all).
@@ -19,7 +34,10 @@ struct PackageBackupEntry {
     std::vector<std::string> apkFiles; ///< Paths relative to the backup directory.
 
     bool dataIncluded = false;
-    std::string dataArchive; ///< Relative path, e.g. "data/com.example.app.tar.gz".
+    DataCaptureMethod dataCaptureMethod = DataCaptureMethod::None;
+    /// Relative path, e.g. "data/com.example.app.tar.gz". Empty when this
+    /// package's data lives in the shared legacy `adb backup` archive.
+    std::string dataArchive;
     unsigned long long dataArchiveBytes = 0;
     std::string dataArchiveSha256;
 
@@ -38,7 +56,7 @@ struct PackageBackupEntry {
 /// is what gets serialized to `manifest.json` at the root of a backup
 /// directory. See docs/MANIFEST.md for the on-disk schema.
 struct Manifest {
-    int formatVersion = 1;
+    int formatVersion = 2;
     std::string abpVersion;
     std::string createdAtUtc;
     std::string mode; ///< "root" or "standard"

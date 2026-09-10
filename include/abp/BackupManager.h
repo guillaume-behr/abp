@@ -14,6 +14,13 @@ struct BackupSummary {
     int packageCount = 0;
     int packagesWithData = 0;
     int packagesWithErrors = 0;
+
+    /// How the captured app data was obtained. In standard mode these split
+    /// per package, so the summary can say what coverage was actually
+    /// achieved rather than just naming the backend.
+    int packagesCapturedByRootTar = 0;
+    int packagesCapturedByRunAs = 0;
+    int packagesCapturedByLegacyBackup = 0;
     bool sharedStorageIncluded = false;
     unsigned long long totalBytes = 0;
     std::filesystem::path outputDir;

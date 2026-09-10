@@ -95,6 +95,19 @@ public:
     /// Returns every APK path (base + splits) for one installed package.
     std::vector<std::string> packageApkPaths(const std::string& packageName) const;
 
+    /// Of `packageNames`, returns those reachable through `run-as` -- that is,
+    /// the packages built with `android:debuggable="true"`. `run-as` executes
+    /// a command as the app's own UID, which is the only way to read
+    /// /data/data/<pkg> without root.
+    ///
+    /// Determined in a single on-device shell pass, so the cost does not grow
+    /// with the number of packages.
+    std::vector<std::string> packagesSupportingRunAs(const std::vector<std::string>& packageNames) const;
+
+    /// Wraps `command` so it runs as `packageName`'s UID via `run-as`. The
+    /// caller is responsible for having checked packagesSupportingRunAs().
+    static std::string asPackage(const std::string& packageName, const std::string& command);
+
 private:
     std::vector<std::string> baseArgs() const;
 

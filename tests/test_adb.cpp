@@ -281,3 +281,73 @@ exit 1
     ABP_CHECK(!access.available());
     ABP_CHECK(access.method == RootMethod::None);
 }
+
+ABP_TEST(adb_detects_run_as_capable_packages_in_one_call) {
+    FakeAdb fake(R"SH(
+echo x >> "${TMPDIR:-/tmp}/abp_runas_calls"
+shift $(( $# - 1 ))
+case "$1" in
+  *"@@abp-runas:"*)
+    # Only the debuggable packages answer.
+    echo "@@abp-runas:com.example.debuggable"
+    echo "@@abp-runas:com.example.alsodebug"
+    exit 0;;
+esac
+exit 1
+)SH");
+
+    const std::string counter = (fs::temp_directory_path() / "abp_runas_calls").string();
+    std::error_code ec;
+    fs::remove(counter, ec);
+
+    auto supported = AdbClient("SERIAL").packagesSupportingRunAs(
+        {"com.example.debuggable", "com.example.locked", "com.example.alsodebug"});
+
+    ABP_CHECK_EQ(supported.size(), 2u);
+    ABP_CHECK_EQ(supported[0], "com.example.debuggable");
+    ABP_CHECK_EQ(supported[1], "com.example.alsodebug");
+
+    std::ifstream calls(counter);
+    std::string line;
+    int callCount = 0;
+    while (std::getline(calls, line)) ++callCount;
+    calls.close();
+    fs::remove(counter, ec);
+    ABP_CHECK_EQ(callCount, 1); // One round trip regardless of package count.
+}
+
+ABP_TEST(adb_reports_no_run_as_packages_on_a_locked_down_device) {
+    FakeAdb fake("exit 1\n");
+    auto supported = AdbClient("SERIAL").packagesSupportingRunAs({"com.example.app"});
+    ABP_CHECK_EQ(supported.size(), 0u);
+}
+
+ABP_TEST(adb_run_as_probe_ignores_unrequested_and_invalid_names) {
+    // A device that echoes back a package nobody asked about must not have it
+    // treated as run-as capable.
+    FakeAdb fake(R"SH(
+shift $(( $# - 1 ))
+case "$1" in
+  *"@@abp-runas:"*)
+    echo "@@abp-runas:com.example.asked"
+    echo "@@abp-runas:com.example.never.asked.about"
+    exit 0;;
+esac
+exit 1
+)SH");
+
+    auto supported = AdbClient("SERIAL").packagesSupportingRunAs({"com.example.asked"});
+    ABP_CHECK_EQ(supported.size(), 1u);
+    ABP_CHECK_EQ(supported[0], "com.example.asked");
+
+    // Names that fail validation never reach the device command.
+    auto none = AdbClient("SERIAL").packagesSupportingRunAs({"com.example; rm -rf /"});
+    ABP_CHECK_EQ(none.size(), 0u);
+
+    ABP_CHECK_EQ(AdbClient("SERIAL").packagesSupportingRunAs({}).size(), 0u);
+}
+
+ABP_TEST(adb_as_package_quotes_the_package_name) {
+    ABP_CHECK_EQ(AdbClient::asPackage("com.example.app", "tar -czf - ."),
+                 "run-as 'com.example.app' tar -czf - .");
+}

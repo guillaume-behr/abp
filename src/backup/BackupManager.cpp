@@ -239,6 +239,12 @@ BackupSummary BackupManager::runBackup(const BackupOptions& options) {
     for (const auto& entry : manifest.packages) {
         if (entry.dataIncluded) ++summary.packagesWithData;
         if (!entry.error.empty()) ++summary.packagesWithErrors;
+        switch (entry.dataCaptureMethod) {
+            case DataCaptureMethod::RootTar: ++summary.packagesCapturedByRootTar; break;
+            case DataCaptureMethod::RunAsTar: ++summary.packagesCapturedByRunAs; break;
+            case DataCaptureMethod::LegacyAdbBackup: ++summary.packagesCapturedByLegacyBackup; break;
+            case DataCaptureMethod::None: break;
+        }
     }
     // Measure the directory rather than summing the manifest's archive sizes:
     // that way APKs and the legacy .ab file are counted too.

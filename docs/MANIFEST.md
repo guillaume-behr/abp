@@ -10,10 +10,11 @@ DIR/
       base.apk
       split_config.arm64_v8a.apk   (if present)
   data/
-    <package>.tar.gz               (root mode only)
+    <package>.tar.gz               (root mode, or run-as in standard mode)
   shared_storage.tar                (root mode; single tar of /sdcard)
   shared_storage/                   (standard mode; plain directory tree, pulled via adb pull)
-  legacy_backup.ab                  (standard mode; raw `adb backup` archive)
+  legacy_backup.ab                  (standard mode; raw `adb backup` archive,
+                                     only for packages run-as could not reach)
 ```
 
 Every path referenced from `manifest.json` is relative to `DIR`, so a
@@ -23,7 +24,7 @@ backup directory is self-contained and can be moved/copied as a whole.
 
 ```jsonc
 {
-  "format_version": 1,
+  "format_version": 2,
   "abp_version": "1.0.0",
   "created_at_utc": "2026-01-01T12:00:00Z",
   "mode": "root",                    // or "standard"
@@ -53,6 +54,7 @@ backup directory is self-contained and can be moved/copied as a whole.
       "apk_files": ["apks/com.example.app/base.apk"],
 
       "data_included": true,
+      "data_capture_method": "root_tar",  // root_tar | run_as_tar | legacy_adb_backup | none
       "data_archive": "data/com.example.app.tar.gz",
       "data_archive_bytes": 45678,
       "data_archive_sha256": "…",
@@ -80,12 +82,34 @@ Notes:
 - `data_included: false` with an empty `error` means there was simply
   nothing to capture (e.g. the app has no data directory yet), not a
   failure.
+- `data_capture_method` says how that package's private data was
+  obtained, because a standard-mode backup mixes methods:
+  - `root_tar` — per-package `tar` of `/data/data/<pkg>` taken as root.
+  - `run_as_tar` — per-package `tar` taken as the app's own UID through
+    `run-as`, which works without root for apps built with
+    `android:debuggable="true"`. Same archive layout as `root_tar`.
+  - `legacy_adb_backup` — the package's data (if any) is inside the
+    shared `legacy_adb_backup_file` archive, not in a per-package file.
+    `data_archive` is empty and there is no checksum, because
+    `adb backup` gives no per-package output.
+  - `none` — no private data was captured for this package.
+  A method this build does not recognise is read as `none`, so an older
+  `abp` never mistakes a future capture method for one it can restore.
+- Only `root_tar` and `run_as_tar` packages can be restored selectively;
+  `legacy_adb_backup` packages share one archive that `adb restore` can
+  only write back as a whole.
 - `external_data_included`/`external_data_archive*` fields are reserved
   for a future capture of `/sdcard/Android/data/<pkg>` (per-app external
   storage); they are always empty/false today.
 - `format_version` will be bumped if the schema changes in a
   backwards-incompatible way; `abp` refuses to guess at unknown
   versions rather than silently misinterpreting a newer manifest.
+  Version 2 added `data_capture_method` and, with it, per-package
+  archives in standard mode — an `abp` that only knows version 1 has no
+  notion of those and would silently skip them on restore. Version 1
+  manifests are still read: a version 1 entry with a `data_archive` can
+  only have come from root mode, and one without can only have come
+  from the legacy archive, so the method is inferred on load.
 
 See [ROOT_BACKUP.md](ROOT_BACKUP.md) for what actually produces the
 `data/*.tar.gz` and `shared_storage.tar` archives, and the top-level

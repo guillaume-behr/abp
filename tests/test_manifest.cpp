@@ -72,7 +72,7 @@ ABP_TEST(manifest_defaults_are_written_and_read_back) {
     Manifest empty;
     Manifest parsed = Manifest::fromJson(empty.toJson());
 
-    ABP_CHECK_EQ(parsed.formatVersion, 1);
+    ABP_CHECK_EQ(parsed.formatVersion, 2);
     ABP_CHECK_EQ(parsed.packages.size(), 0u);
     ABP_CHECK(!parsed.sharedStorageIncluded);
     ABP_CHECK(!parsed.device.isRooted());
@@ -112,4 +112,63 @@ ABP_TEST(manifest_round_trips_every_root_method) {
         Manifest parsed = Manifest::fromJson(manifest.toJson());
         ABP_CHECK(parsed.device.root.method == method);
     }
+}
+
+ABP_TEST(manifest_round_trips_every_data_capture_method) {
+    for (DataCaptureMethod method : {DataCaptureMethod::None, DataCaptureMethod::RootTar,
+                                      DataCaptureMethod::RunAsTar, DataCaptureMethod::LegacyAdbBackup}) {
+        Manifest manifest;
+        PackageBackupEntry pkg;
+        pkg.name = "com.example.app";
+        pkg.dataCaptureMethod = method;
+        manifest.packages.push_back(pkg);
+
+        Manifest parsed = Manifest::fromJson(manifest.toJson());
+        ABP_CHECK(parsed.packages[0].dataCaptureMethod == method);
+    }
+}
+
+ABP_TEST(manifest_v1_root_backup_infers_root_tar_capture) {
+    // Format version 1 had no data_capture_method. A root-mode entry with a
+    // per-package archive can only have come from a root tar.
+    const std::string v1 = R"({
+      "format_version": 1,
+      "mode": "root",
+      "packages": [
+        {"name": "com.example.app", "data_included": true,
+         "data_archive": "data/com.example.app.tar.gz"}
+      ]
+    })";
+
+    Manifest parsed = Manifest::fromJson(v1);
+    ABP_CHECK_EQ(parsed.formatVersion, 1);
+    ABP_CHECK(parsed.packages[0].dataCaptureMethod == DataCaptureMethod::RootTar);
+}
+
+ABP_TEST(manifest_v1_standard_backup_infers_legacy_capture) {
+    // In format version 1, standard mode had no per-package archives at all,
+    // so any captured data came from the legacy adb backup archive.
+    const std::string v1 = R"({
+      "format_version": 1,
+      "mode": "standard",
+      "legacy_adb_backup_file": "legacy_backup.ab",
+      "packages": [
+        {"name": "com.example.app", "data_included": true, "data_archive": ""},
+        {"name": "com.example.nodata", "data_included": false}
+      ]
+    })";
+
+    Manifest parsed = Manifest::fromJson(v1);
+    ABP_CHECK(parsed.packages[0].dataCaptureMethod == DataCaptureMethod::LegacyAdbBackup);
+    ABP_CHECK(parsed.packages[1].dataCaptureMethod == DataCaptureMethod::None);
+}
+
+ABP_TEST(manifest_capture_method_names_round_trip) {
+    ABP_CHECK_EQ(std::string(dataCaptureMethodName(DataCaptureMethod::RunAsTar)), "run_as_tar");
+    ABP_CHECK(dataCaptureMethodFromName("run_as_tar") == DataCaptureMethod::RunAsTar);
+    ABP_CHECK(dataCaptureMethodFromName("root_tar") == DataCaptureMethod::RootTar);
+    ABP_CHECK(dataCaptureMethodFromName("legacy_adb_backup") == DataCaptureMethod::LegacyAdbBackup);
+    // An unknown method from a future abp degrades to "nothing captured"
+    // rather than being mistaken for a method this build understands.
+    ABP_CHECK(dataCaptureMethodFromName("something_new") == DataCaptureMethod::None);
 }

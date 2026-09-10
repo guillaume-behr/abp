@@ -88,6 +88,25 @@ abp backup -o ~/backups/two-apps --no-apks --only com.example.one,com.example.tw
 abp backup -o ~/backups/most --exclude com.chatty.app
 ```
 
+### What gets captured
+
+Standard (non-root) mode captures debuggable apps completely via `run-as`
+and falls back to legacy `adb backup` only for the rest, so coverage is
+per app rather than all-or-nothing. See the
+[coverage table](../README.md#-what-each-mode-can-save) and
+[NON_ROOT_BACKUP.md](NON_ROOT_BACKUP.md).
+
+The backup summary reports the split, for example:
+
+```
+Backup complete (standard mode).
+  Packages:        48
+  With app data:   41
+    via run-as:     12 (complete per-app archives)
+    via adb backup: 29 (partial; apps may have opted out)
+  Errors:          0
+```
+
 ## `abp restore -i DIR [options]`
 
 | Option                | Description |
@@ -105,14 +124,20 @@ There is no `--root`/`--standard` flag for restore: the backup's own
 `manifest.json` records which mode produced it, and that dictates how
 its app data must be restored.
 
-**Per-package filtering (`--only`/`--exclude`) only works for app data in
-root-mode backups**, because root mode captures one archive per package.
-Standard-mode app data lives in a single `legacy_backup.ab` file produced
-by `adb backup`, which can only be restored as a whole — `abp` will warn
-and restore all of it regardless of `--only`/`--exclude`. APK
-installation and shared storage restoration always respect the filters
-(shared storage has no per-package concept, so `--only`/`--exclude` don't
-apply to it at all — use `--no-shared` to skip it entirely).
+**Per-package filtering (`--only`/`--exclude`) works for app data that was
+captured into a per-package archive** — that is, everything in a root-mode
+backup, and every debuggable app in a standard-mode backup (captured via
+`run-as`). Check `data_capture_method` in `manifest.json`: `root_tar` and
+`run_as_tar` filter per package; `legacy_adb_backup` does not.
+
+Packages captured into `legacy_backup.ab` by `adb backup` share one opaque
+archive that `adb restore` can only write back as a whole. `abp` only
+invokes that restore if at least one selected package needs it, and warns
+when doing so will also restore packages you deselected.
+
+APK installation always respects the filters. Shared storage has no
+per-package concept, so `--only`/`--exclude` don't apply to it at all —
+use `--no-shared` to skip it entirely.
 
 Examples:
 

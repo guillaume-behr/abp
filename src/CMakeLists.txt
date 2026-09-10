@@ -6,6 +6,7 @@ set(ABP_CORE_SOURCES
     util/FsUtil.cpp
     util/Logger.cpp
     adb/AdbClient.cpp
+    backup/ArchiveIntegrity.cpp
     backup/Manifest.cpp
     backup/StandardBackend.cpp
     backup/RootBackend.cpp

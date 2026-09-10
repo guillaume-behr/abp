@@ -5,6 +5,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Standard (non-root) mode now captures debuggable apps completely.**
+  Any package built with `android:debuggable="true"` is read directly
+  through `run-as` and stored as a per-package `tar` archive, in the
+  same layout root mode produces -- with a SHA-256 checksum, and with no
+  on-device confirmation prompt. Only packages `run-as` cannot reach
+  fall back to the legacy `adb backup` archive, and if `run-as` covers
+  everything selected, the legacy flow (and its prompt) is skipped
+  entirely.
+- **Selective restore now works in standard mode** for those packages:
+  `--only`/`--exclude` filter per package for anything captured as a
+  per-package archive. `abp` warns when a legacy-archive restore will
+  additionally bring back packages that were deselected, since
+  `adb restore` cannot filter.
+- `run-as` restores need no UID remapping: `tar` runs as the app's own
+  UID, so files land correctly owned by construction, where root mode
+  has to snapshot the UID and `chown -R` afterwards.
+- A coverage table in README.md comparing exactly what root mode,
+  non-root/debuggable and non-root/ordinary each save, plus
+  docs/NON_ROOT_BACKUP.md describing the three mechanisms standard mode
+  uses and their limits.
+- The backup summary reports how many packages were captured by each
+  mechanism, so the difference between a complete and a best-effort
+  capture is visible rather than implied by the mode name.
+- Manifest format version 2: a per-package `data_capture_method`
+  (`root_tar` / `run_as_tar` / `legacy_adb_backup` / `none`). Version 1
+  manifests are still read, with the method inferred from the entry's
+  shape. An unrecognised method from a future abp reads as `none`
+  rather than being mistaken for one this build can restore.
+
 ### Fixed
 
 - `abp` no longer refuses to run when an offline or unauthorized device
@@ -46,6 +77,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   receives escape codes just because stderr is a terminal.
 - CI now runs on pushes to `master`; it had been watching a `main`
   branch that does not exist.
+- Log output is flushed per line, so warnings no longer all appear ahead
+  of the info lines they belong after when output is piped to a file
+  (stdout is block-buffered when it is not a terminal; stderr never is).
 
 ### Changed
 

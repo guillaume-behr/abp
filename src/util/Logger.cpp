@@ -68,6 +68,11 @@ void Logger::log(LogLevel level, const std::string& message) {
             std::fprintf(stream, "%s\n", message.c_str());
         }
     }
+
+    // stdout is block-buffered when it is not a terminal while stderr never
+    // is, so without this every warning would surface ahead of the info lines
+    // it belongs after whenever output is piped to a file or a log.
+    std::fflush(stream);
 }
 
 void Logger::debug(const std::string& message) { log(LogLevel::Debug, message); }

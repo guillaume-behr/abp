@@ -214,6 +214,22 @@ int cmdBackup(const std::vector<std::string>& args) {
     std::cout << "\nBackup complete (" << summary.mode << " mode).\n";
     std::cout << "  Packages:        " << summary.packageCount << "\n";
     std::cout << "  With app data:   " << summary.packagesWithData << "\n";
+
+    // Spell out how that data was actually obtained. In standard mode the
+    // split between `run-as` and the legacy archive is the difference between
+    // a complete per-app capture and a best-effort one, so it is worth saying.
+    if (summary.packagesCapturedByRootTar > 0) {
+        std::cout << "    via root tar:   " << summary.packagesCapturedByRootTar << "\n";
+    }
+    if (summary.packagesCapturedByRunAs > 0) {
+        std::cout << "    via run-as:     " << summary.packagesCapturedByRunAs
+                   << " (complete per-app archives)\n";
+    }
+    if (summary.packagesCapturedByLegacyBackup > 0) {
+        std::cout << "    via adb backup: " << summary.packagesCapturedByLegacyBackup
+                   << " (partial; apps may have opted out)\n";
+    }
+
     std::cout << "  Errors:          " << summary.packagesWithErrors << "\n";
     std::cout << "  Shared storage:  " << (summary.sharedStorageIncluded ? "included" : "skipped") << "\n";
     std::cout << "  Total size:      " << strutil::formatBytes(summary.totalBytes) << "\n";
