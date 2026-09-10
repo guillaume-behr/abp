@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cerrno>
+#include <cstdio>
 #include <csignal>
 #include <cstring>
 #include <fcntl.h>
@@ -356,6 +357,36 @@ ProcessResult Process::runToFile(const std::vector<std::string>& args, const std
 
     Fd noStdin;
     pumpIo(noStdin, -1, errPipe.read().get(), nullptr, result);
+
+    reap(pid, result);
+    return result;
+}
+
+ProcessResult Process::runInheritStdio(const std::vector<std::string>& args) {
+    ProcessResult result;
+    if (args.empty()) {
+        result.spawnFailed = true;
+        return result;
+    }
+    ignoreSigPipeOnce();
+
+    // Anything this process has buffered must reach the terminal before the
+    // child starts writing to the same fds, or abp's own log lines would
+    // surface after output the child produced later.
+    std::fflush(nullptr);
+
+    pid_t pid = fork();
+    if (pid < 0) {
+        result.spawnFailed = true;
+        return result;
+    }
+
+    if (pid == 0) {
+        // No redirection at all: the child inherits stdin/stdout/stderr.
+        auto argv = buildArgv(args);
+        execvp(argv[0], argv.data());
+        _exit(127);
+    }
 
     reap(pid, result);
     return result;

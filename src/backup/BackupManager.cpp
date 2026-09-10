@@ -6,6 +6,7 @@
 #include <system_error>
 
 #include "abp/AdbClient.h"
+#include "abp/DevicePaths.h"
 #include "abp/FsUtil.h"
 #include "abp/IBackupBackend.h"
 #include "abp/Logger.h"
@@ -117,6 +118,84 @@ void installApks(const AdbClient& adb, const fs::path& backupDir, Manifest& mani
     }
 }
 
+/// Copies whole device paths verbatim with `adb pull`, recording each tree
+/// in the manifest. Needs no elevated privileges of its own -- what it can
+/// read is simply whatever the adb user can see, which is far more when adbd
+/// is running as root.
+void captureFilesystem(const AdbClient& adb, const fs::path& outDir, const std::vector<std::string>& requestedPaths,
+                        bool sharedStorageAlreadyCaptured, Manifest& manifest) {
+    std::vector<std::string> paths = devicepaths::collapseRedundant(requestedPaths);
+    if (paths.empty()) return;
+
+    const fs::path fsDir = outDir / "filesystem";
+    if (!fsutil::ensureDirectory(fsDir)) {
+        Logger::error("Could not create " + fsDir.string() + "; skipping the filesystem capture.");
+        return;
+    }
+
+    for (const auto& devicePath : paths) {
+        const devicepaths::PathVerdict verdict = devicepaths::classify(devicePath);
+        if (verdict != devicepaths::PathVerdict::Ok) {
+            Logger::warn(devicepaths::explainVerdict(verdict, devicePath));
+            continue;
+        }
+
+        // /sdcard is already in the backup as shared storage; pulling it again
+        // would silently double the size of a full-device capture.
+        if (sharedStorageAlreadyCaptured &&
+            (devicepaths::isUnder(devicePath, "/sdcard") || devicepaths::isUnder(devicePath, "/storage/emulated/0"))) {
+            Logger::info("Skipping " + devicePath + " (already captured as shared storage).");
+            continue;
+        }
+
+        bool exists = false;
+        adb.shellText("[ -e " + strutil::shellQuote(devicePath) + " ] && echo yes", &exists);
+        if (!exists) {
+            Logger::debug("Skipping " + devicePath + " (not present on this device).");
+            continue;
+        }
+
+        // One directory per captured root, named after the path so the
+        // backup is navigable: "/data/app" becomes "filesystem/data_app".
+        std::string localName = fsutil::sanitizeForFilename(
+            devicePath.substr(1).empty() ? std::string("root") : devicePath.substr(1));
+        const fs::path localPath = fsDir / localName;
+
+        std::error_code ec;
+        fs::remove_all(localPath, ec); // adb pull creates the destination itself.
+
+        Logger::info("Pulling " + devicePath + " ...");
+
+        bool sawErrors = false;
+        std::string errorText;
+        const bool ok = adb.pullTree(devicePath, localPath.string(), &sawErrors, &errorText);
+
+        const unsigned long long bytes = fsutil::directorySize(localPath);
+        if (!ok && bytes == 0) {
+            Logger::warn("Could not pull " + devicePath +
+                          (errorText.empty() ? std::string() : ": " + errorText));
+            fs::remove_all(localPath, ec);
+            continue;
+        }
+
+        FilesystemCapture capture;
+        capture.devicePath = devicePath;
+        capture.localPath = (fs::path("filesystem") / localName).generic_string();
+        capture.bytes = bytes;
+        capture.complete = ok && !sawErrors;
+        if (!capture.complete) {
+            capture.note = errorText.empty()
+                                ? "adb pull reported errors; parts of this tree were not readable"
+                                : errorText.substr(0, 500);
+            Logger::warn("Captured " + devicePath + " only partially (" + strutil::formatBytes(bytes) +
+                          "); some paths were not readable by adb.");
+        } else {
+            Logger::info("Captured " + devicePath + " (" + strutil::formatBytes(bytes) + ").");
+        }
+        manifest.filesystemCaptures.push_back(std::move(capture));
+    }
+}
+
 std::unique_ptr<IBackupBackend> chooseBackupBackend(const BackupOptions& options, const DeviceInfo& device) {
     bool useRoot;
     switch (options.mode) {
@@ -221,6 +300,29 @@ BackupSummary BackupManager::runBackup(const BackupOptions& options) {
     if (options.includeSharedStorage) {
         Logger::info("Backing up shared storage...");
         summary.sharedStorageIncluded = backend->backupSharedStorage(adb, options.outputDir, manifest);
+    }
+
+    if (!options.filesystemPaths.empty()) {
+        // `adb pull` transfers as whatever user adbd runs as. A `su` binary
+        // cannot change that: su elevates commands run through the shell,
+        // while pull is a separate file-transfer service. So on a Magisk-style
+        // device this capture is no more complete than on an unrooted one,
+        // and saying so beats letting the "root mode" banner imply otherwise.
+        if (device.root.method == RootMethod::SuBinary) {
+            Logger::warn("This device is rooted through a 'su' binary, but 'adb pull' transfers as the adb user, "
+                          "which 'su' cannot elevate. Paths like /data will be captured only in part. Run "
+                          "'adb root' first for a complete capture.");
+        } else if (!device.isRooted()) {
+            Logger::warn("Without root, 'adb pull' can read /sdcard and the read-only system partitions but "
+                          "almost nothing under /data. Incomplete trees are marked in manifest.json.");
+        }
+
+        Logger::info("Pulling device filesystem paths...");
+        captureFilesystem(adb, options.outputDir, options.filesystemPaths, summary.sharedStorageIncluded, manifest);
+        summary.filesystemCaptureCount = static_cast<int>(manifest.filesystemCaptures.size());
+        for (const auto& capture : manifest.filesystemCaptures) {
+            if (!capture.complete) ++summary.filesystemPartialCount;
+        }
     }
 
     // The manifest is what makes the directory a restorable backup, so a
@@ -339,6 +441,20 @@ RestoreSummary BackupManager::runRestore(const RestoreOptions& options) {
 
     if (options.includeSharedStorage && !(needsRoot && !device.isRooted())) {
         summary.sharedStorageRestored = backend->restoreSharedStorage(adb, options.inputDir, manifest);
+    }
+
+    // Filesystem captures are deliberately not pushed back. They are raw
+    // copies of whole partitions: writing /system needs a writable system
+    // partition and can leave a device unbootable, and blindly pushing /data
+    // over a running system would break app UIDs and SELinux labels far more
+    // thoroughly than the per-package restore above. They are archival, and
+    // the summary says so rather than silently ignoring them.
+    if (!manifest.filesystemCaptures.empty()) {
+        summary.filesystemCapturesPresent = static_cast<int>(manifest.filesystemCaptures.size());
+        Logger::warn("This backup also contains " + std::to_string(manifest.filesystemCaptures.size()) +
+                      " raw device path capture(s) under '" + (options.inputDir / "filesystem").string() +
+                      "'. abp does not push these back: restoring whole partitions over a running system "
+                      "is not safe to automate. Copy what you need from them by hand.");
     }
 
     for (const auto& entry : manifest.packages) {

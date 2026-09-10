@@ -110,5 +110,25 @@ filter.
 - A checksum mismatch on a `run_as_tar` archive skips that package
   entirely rather than unpacking a corrupted archive over live app data.
 
+## Pulling whole partitions without root
+
+`--all-files` and `--pull-path` copy device trees verbatim with
+`adb pull -a`, and are not root-specific — but what they can read is.
+`adb pull` runs as whatever user adbd runs as, so on a non-rooted device
+it sees `/sdcard` and the read-only system partitions (`/system`,
+`/vendor`, `/product`, ...) but almost nothing under `/data`, which is
+mode 0700 root.
+
+A `su` binary does **not** close this gap. `su` elevates commands run
+through the shell; `adb pull` is a separate file-transfer service that
+cannot be routed through it. So on a device rooted with Magisk but
+without `adb root`, `--all-files` still captures only the shell-readable
+parts — and marks the rest `"complete": false` in the manifest rather
+than presenting a partial copy as a whole one.
+
+For app data on such a device, the `run-as` capture above is the better
+tool: it reaches the complete private directory of every debuggable app,
+which `adb pull` cannot touch at all.
+
 See [ROOT_BACKUP.md](ROOT_BACKUP.md) for the root-mode equivalents and
 [MANIFEST.md](MANIFEST.md) for the on-disk schema.

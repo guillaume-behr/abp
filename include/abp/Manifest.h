@@ -51,12 +51,26 @@ struct PackageBackupEntry {
     std::string error;
 };
 
+/// One device path pulled wholesale with `adb pull`, recorded so a restore
+/// (or a human) knows what the `filesystem/` directory of a backup contains
+/// and how complete each tree is.
+struct FilesystemCapture {
+    std::string devicePath;  ///< Absolute path on the device, e.g. "/data".
+    std::string localPath;   ///< Relative to the backup directory, e.g. "filesystem/data".
+    unsigned long long bytes = 0;
+    /// False when `adb pull` reported errors -- almost always permission
+    /// denied on a path the shell user cannot read. The tree is still kept,
+    /// because a partial capture of /data is far better than none.
+    bool complete = false;
+    std::string note; ///< Why it is incomplete, when abp could tell.
+};
+
 /// Full description of one abp backup: device identity, the mode used to
 /// produce it, and every package/shared-storage archive it contains. This
 /// is what gets serialized to `manifest.json` at the root of a backup
 /// directory. See docs/MANIFEST.md for the on-disk schema.
 struct Manifest {
-    int formatVersion = 2;
+    int formatVersion = 3;
     std::string abpVersion;
     std::string createdAtUtc;
     std::string mode; ///< "root" or "standard"
@@ -75,6 +89,11 @@ struct Manifest {
     /// Set only in standard mode when the legacy `adb backup` flow was used
     /// for app data instead of (or in addition to) per-package archives.
     std::string legacyAdbBackupFile;
+
+    /// Whole device paths pulled with `adb pull` (see --all-files). Separate
+    /// from the per-package and shared-storage captures above: these are raw
+    /// filesystem copies that abp records but never pushes back on its own.
+    std::vector<FilesystemCapture> filesystemCaptures;
 
     std::vector<PackageBackupEntry> packages;
 

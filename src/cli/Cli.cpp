@@ -7,6 +7,7 @@
 #include "abp/AdbClient.h"
 #include "abp/BackupManager.h"
 #include "abp/BackupOptions.h"
+#include "abp/DevicePaths.h"
 #include "abp/Json.h"
 #include "abp/Logger.h"
 #include "abp/StringUtil.h"
@@ -43,6 +44,13 @@ Backup options:
       --exclude PKGS      Comma-separated package names to exclude.
       --root              Require root; fail if unavailable.
       --standard          Force standard (non-root) mode even if root is available.
+      --all-files         Also copy every persistent device partition verbatim
+                          with 'adb pull' (/data, /sdcard, /system, /vendor,
+                          ...). Without root, most of /data is unreadable and
+                          is captured only partially. This can be very large.
+      --pull-path PATH    Also copy one device path verbatim with 'adb pull'.
+                          Repeatable. Implies the same capture as --all-files
+                          but for exactly the paths you name.
   -y, --yes               Do not prompt for confirmation.
 
 Restore options:
@@ -183,6 +191,12 @@ int cmdBackup(const std::vector<std::string>& args) {
         else if (arg == "--exclude") options.excludePackages = splitCsv(value(arg.c_str()));
         else if (arg == "--root") options.mode = BackupMode::Root;
         else if (arg == "--standard") options.mode = BackupMode::Standard;
+        else if (arg == "--all-files") {
+            for (const auto& root : devicepaths::defaultCaptureRoots()) {
+                options.filesystemPaths.push_back(root);
+            }
+        }
+        else if (arg == "--pull-path") options.filesystemPaths.push_back(value(arg.c_str()));
         else if (arg == "-y" || arg == "--yes") options.assumeYes = true;
         else {
             Logger::error("Unknown backup option: " + arg);
@@ -195,11 +209,27 @@ int cmdBackup(const std::vector<std::string>& args) {
         return 2;
     }
 
+    // Reject an unusable --pull-path now, rather than after a long backup has
+    // already run. --all-files supplies its own paths, so this only ever
+    // rejects something the user typed.
+    for (const auto& path : options.filesystemPaths) {
+        const devicepaths::PathVerdict verdict = devicepaths::classify(path);
+        if (verdict != devicepaths::PathVerdict::Ok) {
+            Logger::error(devicepaths::explainVerdict(verdict, path));
+            return 2;
+        }
+    }
+
     if (!ensureAdbAvailable()) return 1;
 
     if (!options.assumeYes) {
         std::cout << "About to back up device" << (options.serial.empty() ? "" : " " + options.serial) << " into '"
                   << options.outputDir.string() << "'.\n";
+        if (!options.filesystemPaths.empty()) {
+            std::cout << "This includes a verbatim 'adb pull' of: "
+                      << strutil::join(devicepaths::collapseRedundant(options.filesystemPaths), ", ") << "\n"
+                      << "Copying whole partitions can take a long time and produce many gigabytes.\n";
+        }
         if (!confirm("Continue?")) {
             std::cout << "Aborted.\n";
             return 1;
@@ -232,6 +262,13 @@ int cmdBackup(const std::vector<std::string>& args) {
 
     std::cout << "  Errors:          " << summary.packagesWithErrors << "\n";
     std::cout << "  Shared storage:  " << (summary.sharedStorageIncluded ? "included" : "skipped") << "\n";
+    if (summary.filesystemCaptureCount > 0) {
+        std::cout << "  Device paths:    " << summary.filesystemCaptureCount << " pulled";
+        if (summary.filesystemPartialCount > 0) {
+            std::cout << " (" << summary.filesystemPartialCount << " only partially readable)";
+        }
+        std::cout << "\n";
+    }
     std::cout << "  Total size:      " << strutil::formatBytes(summary.totalBytes) << "\n";
     std::cout << "  Output:          " << summary.outputDir.string() << "\n";
     return 0;
@@ -290,6 +327,10 @@ int cmdRestore(const std::vector<std::string>& args) {
     std::cout << "  Packages restored: " << summary.packagesRestored << "\n";
     std::cout << "  Packages failed:   " << summary.packagesFailed << "\n";
     std::cout << "  Shared storage:    " << (summary.sharedStorageRestored ? "restored" : "skipped") << "\n";
+    if (summary.filesystemCapturesPresent > 0) {
+        std::cout << "  Device paths:      " << summary.filesystemCapturesPresent
+                   << " present, not restored (copy by hand)\n";
+    }
     return summary.packagesFailed > 0 ? 1 : 0;
 }
 

@@ -97,6 +97,26 @@ PackageBackupEntry packageFromJson(const JsonValue& obj, const std::string& mani
     return pkg;
 }
 
+JsonValue filesystemCaptureToJson(const FilesystemCapture& capture) {
+    JsonValue obj = JsonValue::makeObject();
+    obj.set("device_path", capture.devicePath);
+    obj.set("local_path", capture.localPath);
+    obj.set("bytes", capture.bytes);
+    obj.set("complete", capture.complete);
+    obj.set("note", capture.note);
+    return obj;
+}
+
+FilesystemCapture filesystemCaptureFromJson(const JsonValue& obj) {
+    FilesystemCapture capture;
+    capture.devicePath = obj.get("device_path").asString();
+    capture.localPath = obj.get("local_path").asString();
+    capture.bytes = static_cast<unsigned long long>(obj.get("bytes").asInt());
+    capture.complete = obj.get("complete").asBool();
+    capture.note = obj.get("note").asString();
+    return capture;
+}
+
 } // namespace
 
 const char* dataCaptureMethodName(DataCaptureMethod method) {
@@ -132,6 +152,10 @@ std::string Manifest::toJson() const {
 
     root.set("legacy_adb_backup_file", legacyAdbBackupFile);
 
+    JsonValue filesystemJson = JsonValue::makeArray();
+    for (const auto& capture : filesystemCaptures) filesystemJson.push_back(filesystemCaptureToJson(capture));
+    root.set("filesystem_captures", filesystemJson);
+
     JsonValue packagesJson = JsonValue::makeArray();
     for (const auto& pkg : packages) packagesJson.push_back(packageToJson(pkg));
     root.set("packages", packagesJson);
@@ -157,6 +181,13 @@ Manifest Manifest::fromJson(const std::string& text) {
     manifest.sharedStorageArchiveSha256 = root.get("shared_storage_archive_sha256").asString();
 
     manifest.legacyAdbBackupFile = root.get("legacy_adb_backup_file").asString();
+
+    // Bound to a named value: get() returns by value, so iterating
+    // get(...).items() directly would walk a destroyed temporary.
+    JsonValue capturesJson = root.get("filesystem_captures");
+    for (const auto& captureJson : capturesJson.items()) {
+        manifest.filesystemCaptures.push_back(filesystemCaptureFromJson(captureJson));
+    }
 
     JsonValue packagesJson = root.get("packages");
     for (const auto& pkgJson : packagesJson.items()) {

@@ -7,6 +7,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **`--all-files` copies whole device partitions verbatim with
+  `adb pull`**, on top of the per-app and shared-storage captures. It
+  expands to every persistent partition a device normally has (`/data`,
+  `/sdcard`, `/system`, `/system_ext`, `/vendor`, `/product`, `/odm`,
+  `/oem`, `/metadata`), skipping any that are absent. `--pull-path PATH`
+  (repeatable) captures exactly the paths you name instead.
+- Each captured tree lands under `filesystem/` in the backup and is
+  recorded in `manifest.json` with its size and whether `adb pull` could
+  read all of it. A tree read only in part is kept and marked
+  `"complete": false` with the reason, rather than being presented as a
+  whole copy.
+- `abp` refuses to pull `/`, `/proc`, `/sys`, `/dev`, `/apex`,
+  `/mnt/runtime` and similar, with an explanation. They are kernel
+  pseudo-filesystems and bind-mount duplicates rather than stored files:
+  `/proc/kcore` alone presents all of physical memory as a single file,
+  and reading a character device can block indefinitely. Redundant paths
+  are collapsed (asking for `/data` and `/data/app` pulls `/data` once),
+  and `/sdcard` is skipped when shared storage already covers it.
+- These captures are deliberately never restored. Writing a raw
+  partition back over a running system is not safe to automate, so
+  `abp restore` reports how many are present and leaves them for you to
+  copy by hand.
+- `abp` warns when `--all-files` cannot reach much: `adb pull` transfers
+  as the adb user, and a `su` binary cannot elevate it (unlike shell
+  commands), so a complete capture of `/data` needs adbd itself running
+  as root via `adb root`.
+- Bulk `adb pull` transfers now write adb's own progress display
+  straight to the terminal instead of having it captured, so a
+  multi-gigabyte pull no longer looks like a hang.
+- Manifest format version 3 for the new `filesystem_captures` section.
+  Versions 1 and 2 still load, with an empty capture list.
+
 - **Standard (non-root) mode now captures debuggable apps completely.**
   Any package built with `android:debuggable="true"` is read directly
   through `run-as` and stored as a per-package `tar` archive, in the
@@ -38,6 +70,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Fixed a dangling reference when reading the manifest: `JsonValue::get()`
+  returns by value, so iterating `get(key).items()` directly walked a
+  destroyed temporary.
 - `abp` no longer refuses to run when an offline or unauthorized device
   is listed ahead of a usable one: with no `-s SERIAL`, any ready device
   now satisfies the connection check.

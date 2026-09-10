@@ -8,6 +8,7 @@ add_executable(abp_tests
     test_adb.cpp
     test_fsutil.cpp
     test_standard_backend.cpp
+    test_devicepaths.cpp
 )
 
 target_link_libraries(abp_tests PRIVATE abp_core)

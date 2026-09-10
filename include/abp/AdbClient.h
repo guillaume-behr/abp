@@ -49,7 +49,19 @@ public:
     std::string shellText(const std::string& command, bool* ok = nullptr) const;
 
     bool push(const std::string& localPath, const std::string& remotePath) const;
-    bool pull(const std::string& remotePath, const std::string& localPath) const;
+
+    /// Copies `remotePath` off the device. When `showProgress` is true adb
+    /// writes its own progress display straight to the terminal instead of
+    /// being captured, which matters for trees big enough that a silent pull
+    /// is indistinguishable from a hang.
+    bool pull(const std::string& remotePath, const std::string& localPath, bool showProgress = false) const;
+
+    /// Like pull(), but preserves timestamps and modes (`adb pull -a`) and
+    /// reports whether adb logged any per-file errors -- which for a
+    /// whole-tree pull normally means "permission denied on part of it"
+    /// rather than an outright failure. `errorText` receives adb's stderr.
+    bool pullTree(const std::string& remotePath, const std::string& localPath, bool* sawErrors,
+                   std::string* errorText) const;
 
     /// Installs one or more APK paths as a single atomic install session
     /// (base + split APKs). `reinstall` maps to `-r` (keep data if present).

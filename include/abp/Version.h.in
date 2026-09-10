@@ -9,7 +9,9 @@ inline constexpr int kVersionPatch = @PROJECT_VERSION_PATCH@;
 /// Bumped to 2 when standard-mode backups gained per-package `run-as`
 /// archives: an abp that only understands version 1 would silently skip that
 /// data on restore, having no notion of per-package archives outside root
-/// mode. Version 1 manifests are still read.
-inline constexpr int kManifestFormatVersion = 2;
+/// mode. Bumped to 3 for `filesystem_captures` (see --all-files), which an
+/// older abp would not report as part of the backup at all. Versions 1 and 2
+/// are still read.
+inline constexpr int kManifestFormatVersion = 3;
 
 } // namespace abp

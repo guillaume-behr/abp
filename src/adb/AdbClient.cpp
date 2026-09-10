@@ -118,12 +118,36 @@ bool AdbClient::push(const std::string& localPath, const std::string& remotePath
     return Process::run(args).ok();
 }
 
-bool AdbClient::pull(const std::string& remotePath, const std::string& localPath) const {
+bool AdbClient::pull(const std::string& remotePath, const std::string& localPath, bool showProgress) const {
     auto args = baseArgs();
     args.push_back("pull");
     args.push_back(remotePath);
     args.push_back(localPath);
-    return Process::run(args).ok();
+    return showProgress ? Process::runInheritStdio(args).ok() : Process::run(args).ok();
+}
+
+bool AdbClient::pullTree(const std::string& remotePath, const std::string& localPath, bool* sawErrors,
+                          std::string* errorText) const {
+    auto args = baseArgs();
+    args.push_back("pull");
+    args.push_back("-a"); // Preserve mtime and mode.
+    args.push_back(remotePath);
+    args.push_back(localPath);
+
+    ProcessResult r = Process::run(args);
+    if (errorText != nullptr) *errorText = strutil::trim(r.stdErr);
+
+    // adb keeps going past a file it cannot read and still exits 0, so the
+    // exit code alone would call a half-copied /data a clean capture.
+    if (sawErrors != nullptr) {
+        const std::string& err = r.stdErr;
+        *sawErrors = err.find("Permission denied") != std::string::npos ||
+                     err.find("permission denied") != std::string::npos ||
+                     err.find("failed to copy") != std::string::npos ||
+                     err.find("couldn't read") != std::string::npos ||
+                     err.find("skipping") != std::string::npos;
+    }
+    return r.ok();
 }
 
 bool AdbClient::installApks(const std::vector<std::string>& localApkPaths, bool reinstall) const {

@@ -13,6 +13,9 @@ DIR/
     <package>.tar.gz               (root mode, or run-as in standard mode)
   shared_storage.tar                (root mode; single tar of /sdcard)
   shared_storage/                   (standard mode; plain directory tree, pulled via adb pull)
+  filesystem/                       (--all-files / --pull-path; one directory per captured path)
+    data/                             ("/data")
+    system/                           ("/system")
   legacy_backup.ab                  (standard mode; raw `adb backup` archive,
                                      only for packages run-as could not reach)
 ```
@@ -24,7 +27,7 @@ backup directory is self-contained and can be moved/copied as a whole.
 
 ```jsonc
 {
-  "format_version": 2,
+  "format_version": 3,
   "abp_version": "1.0.0",
   "created_at_utc": "2026-01-01T12:00:00Z",
   "mode": "root",                    // or "standard"
@@ -44,6 +47,18 @@ backup directory is self-contained and can be moved/copied as a whole.
   "shared_storage_archive_sha256": "…",  // empty when shared_storage_is_directory is true
 
   "legacy_adb_backup_file": "",       // set to "legacy_backup.ab" in standard mode
+
+  // Whole device paths copied verbatim with `adb pull` (--all-files /
+  // --pull-path). Empty unless one of those was used.
+  "filesystem_captures": [
+    {
+      "device_path": "/data",           // absolute path on the device
+      "local_path": "filesystem/data",  // relative to the backup directory
+      "bytes": 2147483648,
+      "complete": false,                // false if adb could not read all of it
+      "note": "Permission denied on /data/data"
+    }
+  ],
 
   "packages": [
     {
@@ -101,6 +116,12 @@ Notes:
 - `external_data_included`/`external_data_archive*` fields are reserved
   for a future capture of `/sdcard/Android/data/<pkg>` (per-app external
   storage); they are always empty/false today.
+- `filesystem_captures` records raw `adb pull` copies of whole device
+  paths. `complete: false` means `adb pull` reported errors — almost
+  always permission denied on part of the tree, which is the normal
+  result of pulling `/data` without root. The partial tree is kept
+  regardless, because part of `/data` beats none of it. `abp restore`
+  never writes these back; it reports them and leaves them alone.
 - `format_version` will be bumped if the schema changes in a
   backwards-incompatible way; `abp` refuses to guess at unknown
   versions rather than silently misinterpreting a newer manifest.
@@ -109,7 +130,10 @@ Notes:
   notion of those and would silently skip them on restore. Version 1
   manifests are still read: a version 1 entry with a `data_archive` can
   only have come from root mode, and one without can only have come
-  from the legacy archive, so the method is inferred on load.
+  from the legacy archive, so the method is inferred on load. Version 3
+  added `filesystem_captures`; an older `abp` would not report those as
+  part of the backup at all. Versions 1 and 2 still load, with an empty
+  `filesystem_captures`.
 
 See [ROOT_BACKUP.md](ROOT_BACKUP.md) for what actually produces the
 `data/*.tar.gz` and `shared_storage.tar` archives, and the top-level

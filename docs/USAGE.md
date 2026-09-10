@@ -70,6 +70,8 @@ useful for scripting `--only`/`--exclude` lists.
 | `--exclude PKGS`       | Comma-separated package names to skip. |
 | `--root`               | Require root; fail immediately if unavailable. |
 | `--standard`           | Force standard (non-root) mode even if root is available. |
+| `--all-files`          | Also copy every persistent device partition verbatim with `adb pull`. |
+| `--pull-path PATH`     | Also copy one device path verbatim with `adb pull`. Repeatable. |
 | `-y, --yes`            | Skip the confirmation prompt. |
 
 Examples:
@@ -87,6 +89,51 @@ abp backup -o ~/backups/two-apps --no-apks --only com.example.one,com.example.tw
 # Everything except a noisy app:
 abp backup -o ~/backups/most --exclude com.chatty.app
 ```
+
+### Pulling whole device paths
+
+`--all-files` and `--pull-path` copy device trees verbatim with
+`adb pull -a`, on top of everything else `abp` captures. Each tree lands
+under `filesystem/<name>` in the backup directory and is listed in
+`manifest.json` under `filesystem_captures`.
+
+```sh
+# Every persistent partition adb can read:
+abp backup -o ~/backups/full --all-files
+
+# Just two specific trees, and nothing else:
+abp backup -o ~/backups/misc --no-apks --no-data --no-shared \
+    --pull-path /data/misc --pull-path /data/system
+```
+
+`--all-files` expands to these roots, skipping any that a given device
+does not have:
+
+```
+/data  /sdcard  /system  /system_ext  /vendor  /product  /odm  /oem  /metadata
+```
+
+Notes:
+
+- **Coverage depends on root.** `adb pull` reads as whatever user adbd
+  runs as. With `adb root` (or a userdebug build) that is root and the
+  capture is complete. Otherwise it is the shell user, which can read
+  `/sdcard` and the read-only system partitions but almost nothing under
+  `/data`. A tree that could only be read in part is recorded with
+  `"complete": false` and a note saying why.
+- **A `su` binary does not help here.** `su` elevates commands run
+  *through the shell*; `adb pull` is a separate file-transfer service
+  that `abp` cannot route through `su`. For a complete `--all-files`
+  capture you need adbd itself running as root.
+- **Redundant paths are collapsed.** Asking for `/data` and `/data/app`
+  pulls `/data` once. `/sdcard` is skipped when shared storage was
+  already captured, unless you passed `--no-shared`.
+- **`/`, `/proc`, `/sys`, `/dev`, `/apex` and friends are refused**, with
+  an explanation. They are kernel pseudo-filesystems and bind-mount
+  duplicates, not stored files — `/proc/kcore` alone presents all of
+  physical memory as one file, and reading a character device under
+  `/dev` can block indefinitely.
+- **These captures are not restored.** See the restore section below.
 
 ### What gets captured
 
@@ -123,6 +170,15 @@ Backup complete (standard mode).
 There is no `--root`/`--standard` flag for restore: the backup's own
 `manifest.json` records which mode produced it, and that dictates how
 its app data must be restored.
+
+**Whole-partition captures (`--all-files`/`--pull-path`) are never pushed
+back.** Restoring a raw partition over a running system is not safe to
+automate: writing `/system` needs a writable system partition and can
+leave a device unbootable, and dropping a `/data` tree over a live system
+would break app UIDs and SELinux labels far more thoroughly than the
+per-package restore does. `abp restore` reports how many such captures a
+backup contains and leaves them in `filesystem/` for you to copy from by
+hand.
 
 **Per-package filtering (`--only`/`--exclude`) works for app data that was
 captured into a per-package archive** — that is, everything in a root-mode

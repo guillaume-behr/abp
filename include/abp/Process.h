@@ -38,6 +38,16 @@ public:
     /// `inputPath`. Use this to stream large/binary input (e.g. pushing a
     /// tar archive into an on-device restore command) without buffering it.
     static ProcessResult runFromFile(const std::vector<std::string>& args, const std::string& inputPath);
+
+    /// Runs `args` with this process' own stdout and stderr, so the child
+    /// writes straight to the terminal. Nothing is captured: the returned
+    /// ProcessResult carries only the exit code.
+    ///
+    /// Use this for bulk transfers (`adb pull` of a large tree), where adb's
+    /// own progress display is the only sign of life during an operation that
+    /// can run for many minutes. Capturing that output instead would make a
+    /// multi-gigabyte pull look like a hang.
+    static ProcessResult runInheritStdio(const std::vector<std::string>& args);
 };
 
 } // namespace abp

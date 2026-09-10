@@ -72,7 +72,7 @@ ABP_TEST(manifest_defaults_are_written_and_read_back) {
     Manifest empty;
     Manifest parsed = Manifest::fromJson(empty.toJson());
 
-    ABP_CHECK_EQ(parsed.formatVersion, 2);
+    ABP_CHECK_EQ(parsed.formatVersion, 3);
     ABP_CHECK_EQ(parsed.packages.size(), 0u);
     ABP_CHECK(!parsed.sharedStorageIncluded);
     ABP_CHECK(!parsed.device.isRooted());
@@ -171,4 +171,44 @@ ABP_TEST(manifest_capture_method_names_round_trip) {
     // An unknown method from a future abp degrades to "nothing captured"
     // rather than being mistaken for a method this build understands.
     ABP_CHECK(dataCaptureMethodFromName("something_new") == DataCaptureMethod::None);
+}
+
+ABP_TEST(manifest_round_trips_filesystem_captures) {
+    Manifest manifest;
+
+    FilesystemCapture complete;
+    complete.devicePath = "/system";
+    complete.localPath = "filesystem/system";
+    complete.bytes = 4096;
+    complete.complete = true;
+    manifest.filesystemCaptures.push_back(complete);
+
+    FilesystemCapture partial;
+    partial.devicePath = "/data";
+    partial.localPath = "filesystem/data";
+    partial.bytes = 8589934592ULL; // 8 GiB, past 32-bit range.
+    partial.complete = false;
+    partial.note = "Permission denied on /data/data";
+    manifest.filesystemCaptures.push_back(partial);
+
+    Manifest parsed = Manifest::fromJson(manifest.toJson());
+    ABP_CHECK_EQ(parsed.filesystemCaptures.size(), 2u);
+    ABP_CHECK_EQ(parsed.filesystemCaptures[0].devicePath, "/system");
+    ABP_CHECK(parsed.filesystemCaptures[0].complete);
+    ABP_CHECK_EQ(parsed.filesystemCaptures[1].devicePath, "/data");
+    ABP_CHECK_EQ(parsed.filesystemCaptures[1].localPath, "filesystem/data");
+    ABP_CHECK_EQ(parsed.filesystemCaptures[1].bytes, 8589934592ULL);
+    ABP_CHECK(!parsed.filesystemCaptures[1].complete);
+    ABP_CHECK_EQ(parsed.filesystemCaptures[1].note, "Permission denied on /data/data");
+}
+
+ABP_TEST(manifest_older_versions_have_no_filesystem_captures) {
+    // A version 1 or 2 manifest predates the section entirely; reading one
+    // must yield an empty list rather than tripping over the missing key.
+    Manifest v2 = Manifest::fromJson(R"({"format_version": 2, "mode": "root", "packages": []})");
+    ABP_CHECK_EQ(v2.formatVersion, 2);
+    ABP_CHECK_EQ(v2.filesystemCaptures.size(), 0u);
+
+    Manifest v1 = Manifest::fromJson(R"({"format_version": 1, "mode": "standard"})");
+    ABP_CHECK_EQ(v1.filesystemCaptures.size(), 0u);
 }

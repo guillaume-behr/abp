@@ -22,6 +22,12 @@ struct BackupSummary {
     int packagesCapturedByRunAs = 0;
     int packagesCapturedByLegacyBackup = 0;
     bool sharedStorageIncluded = false;
+
+    /// Device paths pulled wholesale via --all-files/--pull-path, and how
+    /// many of those trees adb could only read part of.
+    int filesystemCaptureCount = 0;
+    int filesystemPartialCount = 0;
+
     unsigned long long totalBytes = 0;
     std::filesystem::path outputDir;
     std::vector<std::string> messages; ///< Fatal errors, printed to the user.
@@ -32,6 +38,11 @@ struct RestoreSummary {
     int packagesRestored = 0;
     int packagesFailed = 0;
     bool sharedStorageRestored = false;
+
+    /// Raw device-path captures found in the backup. abp reports these but
+    /// never writes them back -- see the note in runRestore().
+    int filesystemCapturesPresent = 0;
+
     std::vector<std::string> messages;
 };
 
