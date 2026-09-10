@@ -1,66 +1,82 @@
-# abp — ADB Backup Program
+<div align="center">
+
+# 📱🔒 abp — ADB Backup Program
+
+**Full Android backups over ADB, from the comfort of your Linux terminal.**
+
+Apps · APKs (incl. split APKs) · Private app data · Shared storage — captured, checksummed, and restorable.
+
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![CI](https://img.shields.io/github/actions/workflow/status/guillaume-behr/abp/ci.yml?branch=master&label=CI)](https://github.com/guillaume-behr/abp/actions/workflows/ci.yml)
+[![C++17](https://img.shields.io/badge/C%2B%2B-17-00599C.svg?logo=cplusplus)](CMakeLists.txt)
+[![CMake](https://img.shields.io/badge/build-CMake-064F8C.svg?logo=cmake)](CMakeLists.txt)
+[![Platform: Linux](https://img.shields.io/badge/platform-Linux-FCC624.svg?logo=linux&logoColor=black)](#-requirements)
+[![Dependencies: none](https://img.shields.io/badge/dependencies-none-success.svg)](#-why)
+
+</div>
+
+---
 
 `abp` is a Linux command-line tool for making full backups of Android
-devices over ADB and restoring them, including installed apps, their
+devices over ADB and restoring them — including installed apps, their
 private data, and shared storage (photos, downloads, etc). It works on
 stock, non-rooted devices via ADB's own backup mechanism, and on rooted
-devices via a more complete `tar`-over-ADB pipeline.
+devices via a much more complete `tar`-over-ADB pipeline.
 
-It is written in modern C++17, built with CMake, and has no third-party
-runtime dependencies beyond a working `adb` (and, for root-mode backups,
-root access on the device).
+Written in modern **C++17**, built with **CMake**, and with **zero
+third-party runtime dependencies** beyond a working `adb` (and, for
+root-mode backups, root access on the device).
 
-## Why
+```mermaid
+flowchart LR
+    D[📱 Android device] <-- adb --> A{{⚙️ abp}}
+    A -->|root available| R["🔧 Root backend<br/>tar streamed over adb exec-out/shell"]
+    A -->|no root| S["📦 Standard backend<br/>adb backup/restore + pull/push"]
+    R --> B[("💾 backup directory<br/>manifest.json + checksummed archives")]
+    S --> B
+    B -. abp restore .-> A
+```
+
+## 🤔 Why
 
 Android's built-in backup story is fragmented: `adb backup` is deprecated,
 silently skips any app with `android:allowBackup="false"` (the default for
 apps targeting recent SDKs), and can't capture split APKs or arbitrary
 files. `abp` gives you a single tool that:
 
-- Uses the best available mechanism automatically (root if present,
+- 🔍 Uses the best available mechanism automatically (root if present,
   otherwise the standard ADB flow), or lets you force one.
-- On rooted devices, captures the **entire** private data directory of
+- 📂 On rooted devices, captures the **entire** private data directory of
   every app (not just what the app opted into), plus its full APK set
   (base + split APKs), plus all of shared storage.
-- Writes a single, versioned, human-readable `manifest.json` describing
+- 🧾 Writes a single, versioned, human-readable `manifest.json` describing
   exactly what was captured, with SHA-256 checksums so a restore can
   detect a corrupted or truncated archive before touching the device.
-- Restores app data with correct ownership (UID/GID) and SELinux context,
-  not just a raw file dump.
+- 🛡️ Restores app data with correct ownership (UID/GID) and SELinux
+  context, not just a raw file dump.
 
-## Features
+## ✨ Features
 
-- **Device discovery**: `abp devices`, `abp info` (model, Android version,
-  root status).
-- **Package enumeration**: `abp list-packages`, with JSON output for
-  scripting.
-- **Full backup**: APKs (including split APKs), per-app private data, and
-  shared storage (`/sdcard`), selectable independently.
-- **Full restore**: reinstalls APKs, restores app data with UID
-  remapping and SELinux relabeling, restores shared storage.
-- **Two backends**, chosen automatically or forced explicitly:
-  - **Root mode** — streams `tar` archives of each app's data directory
-    (and of `/sdcard`) directly over `adb exec-out` / `adb shell`, without
-    ever buffering large data in the host process's memory.
-  - **Standard mode** — uses the public `adb backup`/`adb restore` flow
-    for app data and `adb pull`/`adb push` for shared storage. Works on
-    any device with USB debugging enabled, no root required.
-- **Selective backup/restore**: `--only`, `--exclude`, `--no-apks`,
-  `--no-data`, `--no-shared`, `--system`.
-- **Integrity checking**: every archive is SHA-256 checksummed at backup
-  time and verified before it is written back to the device at restore
-  time.
-- **No shell injection surface**: every command sent to `adb`/the device
-  shell is built from validated package names and paths, never from raw
-  string concatenation of untrusted input.
+| | |
+|---|---|
+| 🔎 **Device discovery** | `abp devices`, `abp info` — model, Android version, root status. |
+| 📋 **Package enumeration** | `abp list-packages`, with JSON output for scripting. |
+| 💾 **Full backup** | APKs (incl. split APKs), per-app private data, and shared storage — selectable independently. |
+| ♻️ **Full restore** | Reinstalls APKs, restores app data with UID remapping + SELinux relabeling, restores shared storage. |
+| 🔧 **Root backend** | Streams `tar` archives of each app's data directory (and of `/sdcard`) over `adb exec-out`/`shell` — never buffers large data in host memory. |
+| 📦 **Standard backend** | Public `adb backup`/`restore` + `adb pull`/`push` — no root required, works on any USB-debuggable device. |
+| 🎯 **Selective ops** | `--only`, `--exclude`, `--no-apks`, `--no-data`, `--no-shared`, `--system`. |
+| ✅ **Integrity checking** | Every archive is SHA-256 checksummed at backup time and verified before it's written back to the device. |
+| 🔒 **No shell-injection surface** | Every device command is built from validated package names/paths — never raw string concatenation of untrusted input. |
 
 See [docs/ROOT_BACKUP.md](docs/ROOT_BACKUP.md) for exactly what root mode
 does on-device, and [docs/MANIFEST.md](docs/MANIFEST.md) for the backup
 directory layout and manifest schema.
 
-## Requirements
+## ⚙️ Requirements
 
-- A C++17 compiler (GCC ≥ 9 or Clang ≥ 10) and CMake ≥ 3.16.
+- A C++17 compiler (GCC ≥ 9 or Clang ≥ 10) and CMake ≥ 3.16 — only needed
+  if you build from source; the install script below builds it for you.
 - `adb` (Android Platform Tools) installed and on your `PATH`, or pointed
   to explicitly with `--adb-path` / `ABP_ADB_PATH`.
 - USB debugging enabled on the target device, and the host authorized
@@ -69,7 +85,46 @@ directory layout and manifest schema.
   shell user (Magisk, KernelSU, etc.) or a userdebug/eng build where
   `adbd` already runs as root.
 
-## Building
+## 📦 Installation
+
+### 🚀 Quick install (recommended)
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/guillaume-behr/abp/master/install.sh | bash
+```
+
+This clones the repo into a temporary directory, builds `abp` with
+CMake, installs the binary to `/usr/local/bin` (or `~/.local/bin` if
+that's not writable), and cleans up after itself. Re-run it any time to
+update to the latest `master`.
+
+<details>
+<summary>Customize the install (version, install directory)</summary>
+
+```sh
+# Install a specific branch/tag:
+ABP_VERSION=v1.0.0 curl -fsSL https://raw.githubusercontent.com/guillaume-behr/abp/master/install.sh | bash
+
+# Install somewhere else:
+ABP_INSTALL_DIR="$HOME/bin" curl -fsSL https://raw.githubusercontent.com/guillaume-behr/abp/master/install.sh | bash
+```
+
+</details>
+
+### 🗑️ Uninstall
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/guillaume-behr/abp/master/uninstall.sh | bash
+```
+
+> As with any `curl | bash` installer, feel free to inspect
+> [`install.sh`](install.sh) / [`uninstall.sh`](uninstall.sh) before
+> running them — they only clone, build, copy/remove one binary, and
+> clean up after themselves. No `sudo` is invoked automatically; you'll
+> only be prompted for a password if your shell's `PATH` setup requires
+> writing to a root-owned directory.
+
+### 🛠️ Build from source manually
 
 ```sh
 git clone https://github.com/guillaume-behr/abp.git
@@ -77,12 +132,7 @@ cd abp
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
 ctest --test-dir build --output-on-failure   # optional: run the unit tests
-```
-
-This produces `build/src/abp`. To install it system-wide:
-
-```sh
-sudo cmake --install build
+sudo cmake --install build                   # optional: install system-wide
 ```
 
 Useful CMake options:
@@ -92,7 +142,7 @@ Useful CMake options:
 | `ABP_BUILD_TESTS`            | `ON`    | Build the `abp_tests` unit test binary.        |
 | `ABP_WARNINGS_AS_ERRORS`     | `OFF`   | Treat compiler warnings as errors (used in CI).|
 
-## Usage
+## 🚀 Usage
 
 ```text
 abp devices                                  # list connected/authorized devices
@@ -103,7 +153,7 @@ abp backup  -o ./my-backup [options]         # back up
 abp restore -i ./my-backup [options]         # restore
 ```
 
-### Backing up
+### 💾 Backing up
 
 ```sh
 # Back up everything abp can reach, auto-detecting root:
@@ -123,7 +173,7 @@ apps with `android:allowBackup="true"` — most modern apps opt out of
 this. Root mode has no such limitation and needs no on-device
 interaction.
 
-### Restoring
+### ♻️ Restoring
 
 ```sh
 abp restore -i ~/backups/pixel-2026-01-01
@@ -138,7 +188,7 @@ app data and shared storage cannot be restored without root.
 Run `abp --help`, or see [docs/USAGE.md](docs/USAGE.md), for the full
 option reference and more examples.
 
-## Limitations
+## ⚠️ Limitations
 
 This is not a substitute for verified, tested backup software for
 anything you cannot afford to lose:
@@ -156,17 +206,19 @@ anything you cannot afford to lose:
 - No encryption is applied to backup archives. If your backups may
   contain sensitive data, store them on encrypted media.
 
-## Documentation
+## 📚 Documentation
 
-- [docs/USAGE.md](docs/USAGE.md) — full command/option reference, examples, troubleshooting.
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — how the code is layered.
-- [docs/ROOT_BACKUP.md](docs/ROOT_BACKUP.md) — exactly what root mode does on-device.
-- [docs/MANIFEST.md](docs/MANIFEST.md) — backup directory layout and `manifest.json` schema.
+| Doc | What's in it |
+|---|---|
+| [docs/USAGE.md](docs/USAGE.md) | Full command/option reference, examples, troubleshooting. |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | How the code is layered. |
+| [docs/ROOT_BACKUP.md](docs/ROOT_BACKUP.md) | Exactly what root mode does on-device. |
+| [docs/MANIFEST.md](docs/MANIFEST.md) | Backup directory layout and `manifest.json` schema. |
 
-## Contributing
+## 🤝 Contributing
 
 Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## License
+## 📄 License
 
-[MIT](LICENSE)
+[MIT](LICENSE) — do what you like with it, just keep the copyright notice.

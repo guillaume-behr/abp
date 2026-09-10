@@ -1,4 +1,4 @@
-# Backup directory layout and manifest schema
+# 🧾 Backup directory layout and manifest schema
 
 A backup produced by `abp backup -o DIR` looks like:
 

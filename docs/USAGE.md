@@ -1,4 +1,4 @@
-# Usage reference
+# 🚀 Usage reference
 
 ## Global options
 

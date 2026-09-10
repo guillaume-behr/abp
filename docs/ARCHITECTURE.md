@@ -1,17 +1,27 @@
-# Architecture
+# 🏗️ Architecture
 
 `abp` is organized in layers, each of which only talks to the layer
 directly below it:
 
-```
-Cli (src/cli)
-  -> BackupManager (src/backup/BackupManager.cpp)
-       -> IBackupBackend (RootBackend | StandardBackend)
-            -> AdbClient (src/adb)
-                 -> Process (src/util)  -- fork/exec, no shell involved
+```mermaid
+flowchart TB
+    CLI["🖥️ Cli<br/><sub>src/cli</sub>"]
+    BM["🧭 BackupManager<br/><sub>src/backup/BackupManager.cpp</sub>"]
+    IF{{"🔀 IBackupBackend"}}
+    RB["🔧 RootBackend"]
+    SB["📦 StandardBackend"]
+    ADB["🔌 AdbClient<br/><sub>src/adb</sub>"]
+    PROC["⚙️ Process<br/><sub>src/util — fork/exec, no host shell involved</sub>"]
+
+    CLI --> BM --> IF
+    IF --> RB
+    IF --> SB
+    RB --> ADB
+    SB --> ADB
+    ADB --> PROC
 ```
 
-## Cli
+## 🖥️ Cli
 
 Parses `argv` into a subcommand and its options (hand-rolled, no argument
 parsing library — the option set is small and stable enough that a
@@ -20,7 +30,7 @@ usage/errors, asks for interactive confirmation before a backup/restore
 unless `-y`/`--yes` is given, and turns a `BackupSummary`/`RestoreSummary`
 into human-readable output.
 
-## BackupManager
+## 🧭 BackupManager
 
 The only place that knows the end-to-end backup/restore *workflow*:
 connect, detect the device and root access, pick a backend, enumerate and
@@ -32,7 +42,7 @@ chosen backend, and read/write `manifest.json`.
 `AdbClient`, and never contains backend-specific commands — that's the
 backend's job.
 
-## IBackupBackend
+## 🔀 IBackupBackend
 
 A small strategy interface (`backupAppData`, `restoreAppData`,
 `backupSharedStorage`, `restoreSharedStorage`) implemented by:
@@ -47,7 +57,7 @@ serialized to `manifest.json`. Keeping backends manifest-aware (rather
 than returning some backend-specific result type) means `BackupManager`
 doesn't need to know anything about *how* a backend records what it did.
 
-## AdbClient
+## 🔌 AdbClient
 
 Thin, typed wrapper over the `adb` command-line tool: `shell`,
 `push`/`pull`, `installApks`, `execOutToFile` (stream a device command's
@@ -65,7 +75,7 @@ to the device's shell. Every value interpolated into that string
 `RootBackend`/`BackupManager` — so untrusted device output can't smuggle
 shell metacharacters into a command abp constructs.
 
-## Process
+## ⚙️ Process
 
 A dependency-free `fork`/`exec` wrapper (`src/util/Process.cpp`). No
 command ever goes through `/bin/sh` on the *host* side — `adb` is always
@@ -79,7 +89,7 @@ invoked with an explicit argv array. Three modes:
 - `runFromFile()` — the mirror image, for pushing an archive back in via
   a command's stdin.
 
-## Util
+## 🧰 Util
 
 `Json` (a small, order-preserving JSON value/parser/serializer),
 `Sha256` (FIPS 180-4, used only for backup integrity checking, not for

@@ -1,4 +1,4 @@
-# Contributing to abp
+# 🤝 Contributing to abp
 
 Thanks for considering a contribution! This project intentionally stays
 small and dependency-free, so the bar for adding new dependencies is high,

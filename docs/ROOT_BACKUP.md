@@ -1,4 +1,4 @@
-# Root-mode backup and restore
+# 🔧 Root-mode backup and restore
 
 This document describes exactly what `abp` does on-device in root mode
 (`RootBackend`), so you know what to expect and can debug it yourself if
