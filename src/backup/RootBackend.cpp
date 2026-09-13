@@ -3,9 +3,9 @@
 #include <algorithm>
 #include <system_error>
 
+#include "abp/ArchiveIntegrity.h"
 #include "abp/FsUtil.h"
 #include "abp/Logger.h"
-#include "abp/Sha256.h"
 #include "abp/StringUtil.h"
 
 namespace abp {
@@ -60,9 +60,10 @@ void RootBackend::backupAppData(const AdbClient& adb, const fs::path& outDir,
         }
 
         entry->dataIncluded = true;
+        entry->dataCaptureMethod = DataCaptureMethod::RootTar;
         entry->dataArchive = (fs::path("data") / fileName).generic_string();
         entry->dataArchiveBytes = size;
-        entry->dataArchiveSha256 = crypto::sha256HexFile(localPath.string());
+        entry->dataArchiveSha256 = integrity::checksumOrEmpty(localPath);
     }
 }
 
@@ -85,11 +86,15 @@ void RootBackend::restoreAppData(const AdbClient& adb, const fs::path& backupDir
             continue;
         }
 
-        if (!entry.dataArchiveSha256.empty() &&
-            crypto::sha256HexFile(archivePath.string()) != entry.dataArchiveSha256) {
+        if (!integrity::checksumMatches(archivePath, entry.dataArchiveSha256)) {
             entry.error = "checksum mismatch for data archive, refusing to restore";
             continue;
         }
+
+        // Stop the app first: extracting over the data directory of a running
+        // process leaves it with a half-old, half-new view of its own files,
+        // and anything it writes afterwards can clobber the restore.
+        adb.shell(asRoot("am force-stop " + entry.name + " 2>/dev/null"));
 
         // Snapshot the UID/GID the package manager just assigned to this
         // (freshly (re)installed, empty) app before we overwrite its data
@@ -135,7 +140,7 @@ bool RootBackend::backupSharedStorage(const AdbClient& adb, const fs::path& outD
     manifest.sharedStorageIsDirectory = false;
     manifest.sharedStorageArchive = "shared_storage.tar";
     manifest.sharedStorageArchiveBytes = size;
-    manifest.sharedStorageArchiveSha256 = crypto::sha256HexFile(localPath.string());
+    manifest.sharedStorageArchiveSha256 = integrity::checksumOrEmpty(localPath);
     return true;
 }
 
@@ -145,8 +150,13 @@ bool RootBackend::restoreSharedStorage(const AdbClient& adb, const fs::path& bac
     fs::path archivePath = backupDir / manifest.sharedStorageArchive;
     if (!fs::exists(archivePath)) return false;
 
-    if (!manifest.sharedStorageArchiveSha256.empty() &&
-        crypto::sha256HexFile(archivePath.string()) != manifest.sharedStorageArchiveSha256) {
+    if (manifest.sharedStorageIsDirectory) {
+        Logger::error("This backup's shared storage is a pulled directory tree, not a tar archive; "
+                      "it cannot be restored through the root backend.");
+        return false;
+    }
+
+    if (!integrity::checksumMatches(archivePath, manifest.sharedStorageArchiveSha256)) {
         Logger::error("Checksum mismatch for shared storage archive, refusing to restore.");
         return false;
     }

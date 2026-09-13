@@ -88,6 +88,14 @@ A small strategy interface (`backupAppData`, `restoreAppData`,
 - **StandardBackend** — the legacy `adb backup`/`adb restore` flow plus
   `adb pull`/`adb push` for shared storage.
 
+`StandardBackend` is itself a hybrid: it captures each debuggable package
+individually through `run-as` (same archive layout as root mode) and only
+falls back to the whole-device legacy `adb backup` for packages `run-as`
+cannot reach. Which one was used is recorded per package as
+`data_capture_method`, because restore has to dispatch on it — per-package
+archives restore selectively, the legacy archive does not. See
+[NON_ROOT_BACKUP.md](NON_ROOT_BACKUP.md).
+
 Both backends mutate a shared `Manifest`, which is what eventually gets
 serialized to `manifest.json`. Keeping backends manifest-aware (rather
 than returning some backend-specific result type) means `BackupManager`
@@ -100,7 +108,15 @@ Thin, typed wrapper over the `adb` command-line tool: `shell`,
 stdout straight to a local file), `shellFromFile` (stream a local file
 into a device command's stdin), plus the legacy `backupToFile`/
 `restoreFromFile`. It also does device/package enumeration (`adb devices
--l`, `pm list packages`, `pm path`) and root detection.
+-l`, `pm list packages -f`, `pm path`) and root detection.
+
+Package enumeration is deliberately split in two. `listPackages()` makes
+a single `pm list packages -f` call, which yields every package name plus
+its *base* APK. Split APKs need `pm path`, so `resolveApkPaths()` batches
+those lookups into one on-device shell loop and is called only for the
+packages actually being backed up — asking per package would cost one
+adb round trip each, which is tens of seconds on a device with a few
+hundred apps.
 
 `AdbClient::shell()` takes a single, already-quoted command string (see
 `StringUtil::shellQuote`), rather than an argv array, because that's what

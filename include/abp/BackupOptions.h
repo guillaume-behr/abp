@@ -24,6 +24,16 @@ struct BackupOptions {
     std::vector<std::string> onlyPackages;    ///< If non-empty, restrict to these.
     std::vector<std::string> excludePackages; ///< Skip these even if selected above.
 
+    /// Whole device paths to copy verbatim with `adb pull`, on top of the
+    /// per-app and shared-storage captures. Empty means no filesystem
+    /// capture at all; --all-files fills this with
+    /// devicepaths::defaultCaptureRoots().
+    ///
+    /// How much of these is actually readable depends on the device: without
+    /// root the shell user sees /sdcard and the read-only system partitions
+    /// but almost nothing under /data.
+    std::vector<std::string> filesystemPaths;
+
     BackupMode mode = BackupMode::Auto;
     bool assumeYes = false; ///< Skip interactive confirmations.
 };

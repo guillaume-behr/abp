@@ -510,8 +510,12 @@ private:
         if (!adb.isConnected()) return errorResponse("No connected and authorized device found.", 404);
 
         bool includeSystem = request.param("system") == "1" || request.param("system") == "true";
+
+        std::vector<PackageInfo> installed = adb.listPackages(includeSystem);
+        adb.resolveApkPaths(installed); // Fill in split APKs so the counts shown are real.
+
         JsonValue packages = JsonValue::makeArray();
-        for (const auto& package : adb.listPackages(includeSystem)) {
+        for (const auto& package : installed) {
             JsonValue item = JsonValue::makeObject();
             item.set("name", package.name);
             item.set("system_app", package.isSystemApp);

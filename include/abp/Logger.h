@@ -19,6 +19,10 @@ public:
     using Sink = std::function<void(LogLevel, const std::string&)>;
 
     static void setVerbose(bool verbose);
+
+    /// Forces colour on or off. Left alone, each stream is decided
+    /// independently by whether it is a terminal, so redirecting only one of
+    /// stdout/stderr does not put escape codes into the redirected one.
     static void setColorEnabled(bool enabled);
 
     /// Installs (or, with an empty function, removes) the message sink.

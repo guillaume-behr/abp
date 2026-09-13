@@ -8,6 +8,21 @@
 
 namespace abp {
 
+/// How a package's private data was captured. Recorded per package because a
+/// standard-mode backup mixes methods: debuggable apps are captured
+/// individually through `run-as`, and whatever is left falls back to the
+/// legacy whole-device `adb backup` archive.
+enum class DataCaptureMethod {
+    None,             ///< No private data was captured for this package.
+    RootTar,          ///< Per-package tar of /data/data/<pkg>, taken as root.
+    RunAsTar,         ///< Per-package tar taken as the app's own UID via `run-as`.
+    LegacyAdbBackup,  ///< Part of the shared legacy `adb backup` archive.
+};
+
+/// The manifest's string form of a DataCaptureMethod, and back.
+const char* dataCaptureMethodName(DataCaptureMethod method);
+DataCaptureMethod dataCaptureMethodFromName(const std::string& name);
+
 /// Per-package record of what was captured and where, stored in the
 /// manifest so a later restore knows exactly what to do (and a human can
 /// inspect the backup without running abp at all).
@@ -19,7 +34,10 @@ struct PackageBackupEntry {
     std::vector<std::string> apkFiles; ///< Paths relative to the backup directory.
 
     bool dataIncluded = false;
-    std::string dataArchive; ///< Relative path, e.g. "data/com.example.app.tar.gz".
+    DataCaptureMethod dataCaptureMethod = DataCaptureMethod::None;
+    /// Relative path, e.g. "data/com.example.app.tar.gz". Empty when this
+    /// package's data lives in the shared legacy `adb backup` archive.
+    std::string dataArchive;
     unsigned long long dataArchiveBytes = 0;
     std::string dataArchiveSha256;
 
@@ -33,12 +51,26 @@ struct PackageBackupEntry {
     std::string error;
 };
 
+/// One device path pulled wholesale with `adb pull`, recorded so a restore
+/// (or a human) knows what the `filesystem/` directory of a backup contains
+/// and how complete each tree is.
+struct FilesystemCapture {
+    std::string devicePath;  ///< Absolute path on the device, e.g. "/data".
+    std::string localPath;   ///< Relative to the backup directory, e.g. "filesystem/data".
+    unsigned long long bytes = 0;
+    /// False when `adb pull` reported errors -- almost always permission
+    /// denied on a path the shell user cannot read. The tree is still kept,
+    /// because a partial capture of /data is far better than none.
+    bool complete = false;
+    std::string note; ///< Why it is incomplete, when abp could tell.
+};
+
 /// Full description of one abp backup: device identity, the mode used to
 /// produce it, and every package/shared-storage archive it contains. This
 /// is what gets serialized to `manifest.json` at the root of a backup
 /// directory. See docs/MANIFEST.md for the on-disk schema.
 struct Manifest {
-    int formatVersion = 1;
+    int formatVersion = 3;
     std::string abpVersion;
     std::string createdAtUtc;
     std::string mode; ///< "root" or "standard"
@@ -57,6 +89,11 @@ struct Manifest {
     /// Set only in standard mode when the legacy `adb backup` flow was used
     /// for app data instead of (or in addition to) per-package archives.
     std::string legacyAdbBackupFile;
+
+    /// Whole device paths pulled with `adb pull` (see --all-files). Separate
+    /// from the per-package and shared-storage captures above: these are raw
+    /// filesystem copies that abp records but never pushes back on its own.
+    std::vector<FilesystemCapture> filesystemCaptures;
 
     std::vector<PackageBackupEntry> packages;
 

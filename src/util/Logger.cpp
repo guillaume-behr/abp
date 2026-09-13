@@ -8,7 +8,20 @@
 namespace abp {
 namespace {
 bool g_verbose = false;
-bool g_colorEnabled = isatty(fileno(stderr)) != 0;
+
+/// Tri-state: unset means "decide per stream from isatty", which keeps escape
+/// codes out of a redirected stdout even while stderr is still a terminal.
+enum class ColorSetting { Auto, Always, Never };
+ColorSetting g_colorSetting = ColorSetting::Auto;
+
+bool colorEnabledFor(FILE* stream) {
+    switch (g_colorSetting) {
+        case ColorSetting::Always: return true;
+        case ColorSetting::Never: return false;
+        case ColorSetting::Auto: break;
+    }
+    return isatty(fileno(stream)) != 0;
+}
 
 std::mutex g_mutex;
 Logger::Sink g_sink;
@@ -35,7 +48,9 @@ const char* levelLabel(LogLevel level) {
 } // namespace
 
 void Logger::setVerbose(bool verbose) { g_verbose = verbose; }
-void Logger::setColorEnabled(bool enabled) { g_colorEnabled = enabled; }
+void Logger::setColorEnabled(bool enabled) {
+    g_colorSetting = enabled ? ColorSetting::Always : ColorSetting::Never;
+}
 
 void Logger::setSink(Sink sink) {
     std::lock_guard<std::mutex> lock(g_mutex);
@@ -53,7 +68,7 @@ void Logger::log(LogLevel level, const std::string& message) {
     FILE* stream = (level == LogLevel::Warn || level == LogLevel::Error) ? stderr : stdout;
     const bool prefixed = level != LogLevel::Info;
 
-    if (g_colorEnabled) {
+    if (colorEnabledFor(stream)) {
         if (prefixed) {
             std::fprintf(stream, "%s[%s]\033[0m %s\n", levelColor(level), levelLabel(level), message.c_str());
         } else {
@@ -66,6 +81,11 @@ void Logger::log(LogLevel level, const std::string& message) {
             std::fprintf(stream, "%s\n", message.c_str());
         }
     }
+
+    // stdout is block-buffered when it is not a terminal while stderr never
+    // is, so without this every warning would surface ahead of the info lines
+    // it belongs after whenever output is piped to a file or a log.
+    std::fflush(stream);
 }
 
 void Logger::debug(const std::string& message) { log(LogLevel::Debug, message); }

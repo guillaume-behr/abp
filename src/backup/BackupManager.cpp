@@ -3,8 +3,10 @@
 #include <algorithm>
 #include <ctime>
 #include <memory>
+#include <system_error>
 
 #include "abp/AdbClient.h"
+#include "abp/DevicePaths.h"
 #include "abp/FsUtil.h"
 #include "abp/IBackupBackend.h"
 #include "abp/Logger.h"
@@ -39,6 +41,22 @@ std::vector<PackageInfo> filterPackages(std::vector<PackageInfo> all, const Back
         if (contains(options.excludePackages, pkg.name)) continue;
         result.push_back(std::move(pkg));
     }
+
+    // Silently backing up nothing because of a typo in --only is worse than
+    // saying so: warn about every requested name that matched no package.
+    for (const auto& requested : options.onlyPackages) {
+        bool matched = false;
+        for (const auto& pkg : result) {
+            if (pkg.name == requested) {
+                matched = true;
+                break;
+            }
+        }
+        if (!matched) {
+            Logger::warn("Requested package '" + requested +
+                          "' is not installed on this device (or was excluded); skipping it.");
+        }
+    }
     return result;
 }
 
@@ -71,6 +89,11 @@ void extractApks(const AdbClient& adb, const fs::path& outDir, const std::vector
         if (!localFiles.empty()) {
             entry->apkIncluded = true;
             entry->apkFiles = std::move(localFiles);
+            if (anyFailed) {
+                // Some splits came across and some did not. Reinstalling an
+                // incomplete split set fails, so this must not look clean.
+                entry->error = "only some APK files could be pulled; the APK set is incomplete";
+            }
         } else if (anyFailed) {
             entry->error = "failed to pull APK file(s) from device";
         }
@@ -92,6 +115,84 @@ void installApks(const AdbClient& adb, const fs::path& backupDir, Manifest& mani
             entry.error = "failed to install APK(s)";
             Logger::warn("Failed to install " + entry.name);
         }
+    }
+}
+
+/// Copies whole device paths verbatim with `adb pull`, recording each tree
+/// in the manifest. Needs no elevated privileges of its own -- what it can
+/// read is simply whatever the adb user can see, which is far more when adbd
+/// is running as root.
+void captureFilesystem(const AdbClient& adb, const fs::path& outDir, const std::vector<std::string>& requestedPaths,
+                        bool sharedStorageAlreadyCaptured, Manifest& manifest) {
+    std::vector<std::string> paths = devicepaths::collapseRedundant(requestedPaths);
+    if (paths.empty()) return;
+
+    const fs::path fsDir = outDir / "filesystem";
+    if (!fsutil::ensureDirectory(fsDir)) {
+        Logger::error("Could not create " + fsDir.string() + "; skipping the filesystem capture.");
+        return;
+    }
+
+    for (const auto& devicePath : paths) {
+        const devicepaths::PathVerdict verdict = devicepaths::classify(devicePath);
+        if (verdict != devicepaths::PathVerdict::Ok) {
+            Logger::warn(devicepaths::explainVerdict(verdict, devicePath));
+            continue;
+        }
+
+        // /sdcard is already in the backup as shared storage; pulling it again
+        // would silently double the size of a full-device capture.
+        if (sharedStorageAlreadyCaptured &&
+            (devicepaths::isUnder(devicePath, "/sdcard") || devicepaths::isUnder(devicePath, "/storage/emulated/0"))) {
+            Logger::info("Skipping " + devicePath + " (already captured as shared storage).");
+            continue;
+        }
+
+        bool exists = false;
+        adb.shellText("[ -e " + strutil::shellQuote(devicePath) + " ] && echo yes", &exists);
+        if (!exists) {
+            Logger::debug("Skipping " + devicePath + " (not present on this device).");
+            continue;
+        }
+
+        // One directory per captured root, named after the path so the
+        // backup is navigable: "/data/app" becomes "filesystem/data_app".
+        std::string localName = fsutil::sanitizeForFilename(
+            devicePath.substr(1).empty() ? std::string("root") : devicePath.substr(1));
+        const fs::path localPath = fsDir / localName;
+
+        std::error_code ec;
+        fs::remove_all(localPath, ec); // adb pull creates the destination itself.
+
+        Logger::info("Pulling " + devicePath + " ...");
+
+        bool sawErrors = false;
+        std::string errorText;
+        const bool ok = adb.pullTree(devicePath, localPath.string(), &sawErrors, &errorText);
+
+        const unsigned long long bytes = fsutil::directorySize(localPath);
+        if (!ok && bytes == 0) {
+            Logger::warn("Could not pull " + devicePath +
+                          (errorText.empty() ? std::string() : ": " + errorText));
+            fs::remove_all(localPath, ec);
+            continue;
+        }
+
+        FilesystemCapture capture;
+        capture.devicePath = devicePath;
+        capture.localPath = (fs::path("filesystem") / localName).generic_string();
+        capture.bytes = bytes;
+        capture.complete = ok && !sawErrors;
+        if (!capture.complete) {
+            capture.note = errorText.empty()
+                                ? "adb pull reported errors; parts of this tree were not readable"
+                                : errorText.substr(0, 500);
+            Logger::warn("Captured " + devicePath + " only partially (" + strutil::formatBytes(bytes) +
+                          "); some paths were not readable by adb.");
+        } else {
+            Logger::info("Captured " + devicePath + " (" + strutil::formatBytes(bytes) + ").");
+        }
+        manifest.filesystemCaptures.push_back(std::move(capture));
     }
 }
 
@@ -150,7 +251,14 @@ BackupSummary BackupManager::runBackup(const BackupOptions& options) {
         return summary;
     }
 
+    std::error_code existingEc;
+    if (fs::exists(options.outputDir / "manifest.json", existingEc)) {
+        Logger::warn("'" + options.outputDir.string() +
+                      "' already contains a backup; its manifest and any same-named archives will be overwritten.");
+    }
+
     Manifest manifest;
+    manifest.formatVersion = kManifestFormatVersion;
     manifest.abpVersion = kVersionString;
     manifest.createdAtUtc = currentUtcTimestamp();
     manifest.mode = backend->name();
@@ -159,6 +267,18 @@ BackupSummary BackupManager::runBackup(const BackupOptions& options) {
     Logger::info("Enumerating installed packages...");
     std::vector<PackageInfo> packages = filterPackages(adb.listPackages(options.includeSystemApps), options);
     Logger::info("Found " + std::to_string(packages.size()) + " package(s) to back up.");
+
+    if (packages.empty()) {
+        summary.messages.push_back("No packages matched the current selection, so there is nothing to back up. "
+                                    "Check --only/--exclude, or pass --system to include system apps.");
+        return summary;
+    }
+
+    if (options.includeApks) {
+        // Split APKs need `pm path`; resolve them for the selected packages
+        // only, in one on-device pass.
+        adb.resolveApkPaths(packages);
+    }
 
     for (const auto& pkg : packages) {
         PackageBackupEntry entry;
@@ -182,18 +302,56 @@ BackupSummary BackupManager::runBackup(const BackupOptions& options) {
         summary.sharedStorageIncluded = backend->backupSharedStorage(adb, options.outputDir, manifest);
     }
 
-    manifest.writeToFile(options.outputDir / "manifest.json");
+    if (!options.filesystemPaths.empty()) {
+        // `adb pull` transfers as whatever user adbd runs as. A `su` binary
+        // cannot change that: su elevates commands run through the shell,
+        // while pull is a separate file-transfer service. So on a Magisk-style
+        // device this capture is no more complete than on an unrooted one,
+        // and saying so beats letting the "root mode" banner imply otherwise.
+        if (device.root.method == RootMethod::SuBinary) {
+            Logger::warn("This device is rooted through a 'su' binary, but 'adb pull' transfers as the adb user, "
+                          "which 'su' cannot elevate. Paths like /data will be captured only in part. Run "
+                          "'adb root' first for a complete capture.");
+        } else if (!device.isRooted()) {
+            Logger::warn("Without root, 'adb pull' can read /sdcard and the read-only system partitions but "
+                          "almost nothing under /data. Incomplete trees are marked in manifest.json.");
+        }
 
-    summary.success = true;
+        Logger::info("Pulling device filesystem paths...");
+        captureFilesystem(adb, options.outputDir, options.filesystemPaths, summary.sharedStorageIncluded, manifest);
+        summary.filesystemCaptureCount = static_cast<int>(manifest.filesystemCaptures.size());
+        for (const auto& capture : manifest.filesystemCaptures) {
+            if (!capture.complete) ++summary.filesystemPartialCount;
+        }
+    }
+
+    // The manifest is what makes the directory a restorable backup, so a
+    // failure to write it fails the whole run rather than escaping as an
+    // uncaught exception after all the data has been transferred.
+    try {
+        manifest.writeToFile(options.outputDir / "manifest.json");
+    } catch (const std::exception& e) {
+        summary.messages.push_back(std::string("Backup data was captured, but writing manifest.json failed: ") +
+                                    e.what() + ". Without it the backup cannot be restored.");
+        return summary;
+    }
+
     summary.mode = manifest.mode;
     summary.packageCount = static_cast<int>(manifest.packages.size());
-    unsigned long long totalBytes = manifest.sharedStorageArchiveBytes;
     for (const auto& entry : manifest.packages) {
         if (entry.dataIncluded) ++summary.packagesWithData;
         if (!entry.error.empty()) ++summary.packagesWithErrors;
-        totalBytes += entry.dataArchiveBytes + entry.externalDataArchiveBytes;
+        switch (entry.dataCaptureMethod) {
+            case DataCaptureMethod::RootTar: ++summary.packagesCapturedByRootTar; break;
+            case DataCaptureMethod::RunAsTar: ++summary.packagesCapturedByRunAs; break;
+            case DataCaptureMethod::LegacyAdbBackup: ++summary.packagesCapturedByLegacyBackup; break;
+            case DataCaptureMethod::None: break;
+        }
     }
-    summary.totalBytes = totalBytes;
+    // Measure the directory rather than summing the manifest's archive sizes:
+    // that way APKs and the legacy .ab file are counted too.
+    summary.totalBytes = fsutil::directorySize(options.outputDir);
+    summary.success = true;
     return summary;
 }
 
@@ -223,6 +381,18 @@ RestoreSummary BackupManager::runRestore(const RestoreOptions& options) {
         return summary;
     }
 
+    if (manifest.formatVersion > kManifestFormatVersion) {
+        summary.messages.push_back(
+            "This backup uses manifest format version " + std::to_string(manifest.formatVersion) + ", but abp " +
+            kVersionString + " only understands up to version " + std::to_string(kManifestFormatVersion) +
+            ". Upgrade abp rather than risk misreading a newer backup.");
+        return summary;
+    }
+    if (manifest.formatVersion < 1) {
+        summary.messages.push_back("manifest.json has no usable format_version; it does not look like an abp backup.");
+        return summary;
+    }
+
     Logger::info("Loaded backup: " + std::to_string(manifest.packages.size()) + " package(s), mode=" + manifest.mode +
                  ", captured " + manifest.createdAtUtc);
 
@@ -238,10 +408,27 @@ RestoreSummary BackupManager::runRestore(const RestoreOptions& options) {
                   : std::unique_ptr<IBackupBackend>(std::make_unique<StandardBackend>());
 
     std::vector<std::string> selectedNames;
-    for (const auto& entry : manifest.packages) {
+    for (auto& entry : manifest.packages) {
         if (!options.onlyPackages.empty() && !contains(options.onlyPackages, entry.name)) continue;
         if (contains(options.excludePackages, entry.name)) continue;
         selectedNames.push_back(entry.name);
+        // `error` currently holds whatever went wrong at *backup* time. The
+        // restore steps below reuse the field, so clear it first -- otherwise
+        // the summary reports old backup failures as restore failures.
+        entry.error.clear();
+    }
+
+    for (const auto& requested : options.onlyPackages) {
+        if (!contains(selectedNames, requested)) {
+            Logger::warn("Requested package '" + requested +
+                          "' is not present in this backup (or was excluded); skipping it.");
+        }
+    }
+
+    if (selectedNames.empty()) {
+        summary.messages.push_back("No packages in this backup matched the current selection. "
+                                    "Check --only/--exclude.");
+        return summary;
     }
 
     if (options.includeApks) {
@@ -254,6 +441,20 @@ RestoreSummary BackupManager::runRestore(const RestoreOptions& options) {
 
     if (options.includeSharedStorage && !(needsRoot && !device.isRooted())) {
         summary.sharedStorageRestored = backend->restoreSharedStorage(adb, options.inputDir, manifest);
+    }
+
+    // Filesystem captures are deliberately not pushed back. They are raw
+    // copies of whole partitions: writing /system needs a writable system
+    // partition and can leave a device unbootable, and blindly pushing /data
+    // over a running system would break app UIDs and SELinux labels far more
+    // thoroughly than the per-package restore above. They are archival, and
+    // the summary says so rather than silently ignoring them.
+    if (!manifest.filesystemCaptures.empty()) {
+        summary.filesystemCapturesPresent = static_cast<int>(manifest.filesystemCaptures.size());
+        Logger::warn("This backup also contains " + std::to_string(manifest.filesystemCaptures.size()) +
+                      " raw device path capture(s) under '" + (options.inputDir / "filesystem").string() +
+                      "'. abp does not push these back: restoring whole partitions over a running system "
+                      "is not safe to automate. Copy what you need from them by hand.");
     }
 
     for (const auto& entry : manifest.packages) {

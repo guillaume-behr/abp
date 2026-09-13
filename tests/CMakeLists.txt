@@ -6,6 +6,11 @@ add_executable(abp_tests
     test_manifest.cpp
     test_backupstore.cpp
     test_http.cpp
+    test_process.cpp
+    test_adb.cpp
+    test_fsutil.cpp
+    test_standard_backend.cpp
+    test_devicepaths.cpp
 )
 
 target_link_libraries(abp_tests PRIVATE abp_core)

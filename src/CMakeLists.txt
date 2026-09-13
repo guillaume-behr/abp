@@ -16,8 +16,10 @@ set(ABP_CORE_SOURCES
     util/Json.cpp
     util/Sha256.cpp
     util/FsUtil.cpp
+    util/DevicePaths.cpp
     util/Logger.cpp
     adb/AdbClient.cpp
+    backup/ArchiveIntegrity.cpp
     backup/Manifest.cpp
     backup/StandardBackend.cpp
     backup/RootBackend.cpp

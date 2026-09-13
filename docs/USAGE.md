@@ -2,14 +2,24 @@
 
 ## Global options
 
-These may appear before the subcommand:
+These may appear anywhere on the command line, before or after the
+subcommand:
 
 | Option              | Description                                                        |
 |----------------------|---------------------------------------------------------------------|
 | `--adb-path PATH`    | Use this `adb` executable instead of the one on `PATH`.            |
+| `-v, --verbose`      | Print debug-level log messages.                                    |
+| `--no-color`         | Disable coloured output.                                           |
 
-The same can be set via the `ABP_ADB_PATH` environment variable, which
-`--adb-path` overrides if both are given.
+`--adb-path` can also be set via the `ABP_ADB_PATH` environment variable,
+which `--adb-path` overrides if both are given.
+
+Colour is enabled automatically when the relevant stream is a terminal
+and disabled when it is redirected. Setting the `NO_COLOR` environment
+variable to any non-empty value turns it off, as does `--no-color`.
+
+`abp -V` / `abp --version` prints the version. (`-v` is *verbose*, as it
+is in most CLIs; use the capital `-V` for the version.)
 
 ## `abp devices`
 
@@ -60,8 +70,9 @@ useful for scripting `--only`/`--exclude` lists.
 | `--exclude PKGS`       | Comma-separated package names to skip. |
 | `--root`               | Require root; fail immediately if unavailable. |
 | `--standard`           | Force standard (non-root) mode even if root is available. |
+| `--all-files`          | Also copy every persistent device partition verbatim with `adb pull`. |
+| `--pull-path PATH`     | Also copy one device path verbatim with `adb pull`. Repeatable. |
 | `-y, --yes`            | Skip the confirmation prompt. |
-| `-v, --verbose`        | Print debug-level log messages. |
 
 Examples:
 
@@ -79,6 +90,70 @@ abp backup -o ~/backups/two-apps --no-apks --only com.example.one,com.example.tw
 abp backup -o ~/backups/most --exclude com.chatty.app
 ```
 
+### Pulling whole device paths
+
+`--all-files` and `--pull-path` copy device trees verbatim with
+`adb pull -a`, on top of everything else `abp` captures. Each tree lands
+under `filesystem/<name>` in the backup directory and is listed in
+`manifest.json` under `filesystem_captures`.
+
+```sh
+# Every persistent partition adb can read:
+abp backup -o ~/backups/full --all-files
+
+# Just two specific trees, and nothing else:
+abp backup -o ~/backups/misc --no-apks --no-data --no-shared \
+    --pull-path /data/misc --pull-path /data/system
+```
+
+`--all-files` expands to these roots, skipping any that a given device
+does not have:
+
+```
+/data  /sdcard  /system  /system_ext  /vendor  /product  /odm  /oem  /metadata
+```
+
+Notes:
+
+- **Coverage depends on root.** `adb pull` reads as whatever user adbd
+  runs as. With `adb root` (or a userdebug build) that is root and the
+  capture is complete. Otherwise it is the shell user, which can read
+  `/sdcard` and the read-only system partitions but almost nothing under
+  `/data`. A tree that could only be read in part is recorded with
+  `"complete": false` and a note saying why.
+- **A `su` binary does not help here.** `su` elevates commands run
+  *through the shell*; `adb pull` is a separate file-transfer service
+  that `abp` cannot route through `su`. For a complete `--all-files`
+  capture you need adbd itself running as root.
+- **Redundant paths are collapsed.** Asking for `/data` and `/data/app`
+  pulls `/data` once. `/sdcard` is skipped when shared storage was
+  already captured, unless you passed `--no-shared`.
+- **`/`, `/proc`, `/sys`, `/dev`, `/apex` and friends are refused**, with
+  an explanation. They are kernel pseudo-filesystems and bind-mount
+  duplicates, not stored files — `/proc/kcore` alone presents all of
+  physical memory as one file, and reading a character device under
+  `/dev` can block indefinitely.
+- **These captures are not restored.** See the restore section below.
+
+### What gets captured
+
+Standard (non-root) mode captures debuggable apps completely via `run-as`
+and falls back to legacy `adb backup` only for the rest, so coverage is
+per app rather than all-or-nothing. See the
+[coverage table](../README.md#-what-each-mode-can-save) and
+[NON_ROOT_BACKUP.md](NON_ROOT_BACKUP.md).
+
+The backup summary reports the split, for example:
+
+```
+Backup complete (standard mode).
+  Packages:        48
+  With app data:   41
+    via run-as:     12 (complete per-app archives)
+    via adb backup: 29 (partial; apps may have opted out)
+  Errors:          0
+```
+
 ## `abp restore -i DIR [options]`
 
 | Option                | Description |
@@ -91,20 +166,34 @@ abp backup -o ~/backups/most --exclude com.chatty.app
 | `--only PKGS`          | Comma-separated package names to restore (root mode only — see below). |
 | `--exclude PKGS`       | Comma-separated package names to skip. |
 | `-y, --yes`            | Skip the confirmation prompt. |
-| `-v, --verbose`        | Print debug-level log messages. |
 
 There is no `--root`/`--standard` flag for restore: the backup's own
 `manifest.json` records which mode produced it, and that dictates how
 its app data must be restored.
 
-**Per-package filtering (`--only`/`--exclude`) only works for app data in
-root-mode backups**, because root mode captures one archive per package.
-Standard-mode app data lives in a single `legacy_backup.ab` file produced
-by `adb backup`, which can only be restored as a whole — `abp` will warn
-and restore all of it regardless of `--only`/`--exclude`. APK
-installation and shared storage restoration always respect the filters
-(shared storage has no per-package concept, so `--only`/`--exclude` don't
-apply to it at all — use `--no-shared` to skip it entirely).
+**Whole-partition captures (`--all-files`/`--pull-path`) are never pushed
+back.** Restoring a raw partition over a running system is not safe to
+automate: writing `/system` needs a writable system partition and can
+leave a device unbootable, and dropping a `/data` tree over a live system
+would break app UIDs and SELinux labels far more thoroughly than the
+per-package restore does. `abp restore` reports how many such captures a
+backup contains and leaves them in `filesystem/` for you to copy from by
+hand.
+
+**Per-package filtering (`--only`/`--exclude`) works for app data that was
+captured into a per-package archive** — that is, everything in a root-mode
+backup, and every debuggable app in a standard-mode backup (captured via
+`run-as`). Check `data_capture_method` in `manifest.json`: `root_tar` and
+`run_as_tar` filter per package; `legacy_adb_backup` does not.
+
+Packages captured into `legacy_backup.ab` by `adb backup` share one opaque
+archive that `adb restore` can only write back as a whole. `abp` only
+invokes that restore if at least one selected package needs it, and warns
+when doing so will also restore packages you deselected.
+
+APK installation always respects the filters. Shared storage has no
+per-package concept, so `--only`/`--exclude` don't apply to it at all —
+use `--no-shared` to skip it entirely.
 
 Examples:
 

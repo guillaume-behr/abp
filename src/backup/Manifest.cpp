@@ -47,6 +47,7 @@ JsonValue packageToJson(const PackageBackupEntry& pkg) {
     obj.set("apk_files", apkFiles);
 
     obj.set("data_included", pkg.dataIncluded);
+    obj.set("data_capture_method", dataCaptureMethodName(pkg.dataCaptureMethod));
     obj.set("data_archive", pkg.dataArchive);
     obj.set("data_archive_bytes", pkg.dataArchiveBytes);
     obj.set("data_archive_sha256", pkg.dataArchiveSha256);
@@ -60,7 +61,7 @@ JsonValue packageToJson(const PackageBackupEntry& pkg) {
     return obj;
 }
 
-PackageBackupEntry packageFromJson(const JsonValue& obj) {
+PackageBackupEntry packageFromJson(const JsonValue& obj, const std::string& manifestMode) {
     PackageBackupEntry pkg;
     pkg.name = obj.get("name").asString();
     pkg.isSystemApp = obj.get("system_app").asBool();
@@ -81,10 +82,59 @@ PackageBackupEntry packageFromJson(const JsonValue& obj) {
     pkg.externalDataArchiveSha256 = obj.get("external_data_archive_sha256").asString();
 
     pkg.error = obj.get("error").asString();
+
+    if (obj.has("data_capture_method")) {
+        pkg.dataCaptureMethod = dataCaptureMethodFromName(obj.get("data_capture_method").asString());
+    } else if (!pkg.dataIncluded) {
+        pkg.dataCaptureMethod = DataCaptureMethod::None;
+    } else if (!pkg.dataArchive.empty()) {
+        // Format version 1 only ever produced per-package archives in root
+        // mode; standard mode had nothing but the legacy archive.
+        pkg.dataCaptureMethod = DataCaptureMethod::RootTar;
+    } else if (manifestMode == "standard") {
+        pkg.dataCaptureMethod = DataCaptureMethod::LegacyAdbBackup;
+    }
     return pkg;
 }
 
+JsonValue filesystemCaptureToJson(const FilesystemCapture& capture) {
+    JsonValue obj = JsonValue::makeObject();
+    obj.set("device_path", capture.devicePath);
+    obj.set("local_path", capture.localPath);
+    obj.set("bytes", capture.bytes);
+    obj.set("complete", capture.complete);
+    obj.set("note", capture.note);
+    return obj;
+}
+
+FilesystemCapture filesystemCaptureFromJson(const JsonValue& obj) {
+    FilesystemCapture capture;
+    capture.devicePath = obj.get("device_path").asString();
+    capture.localPath = obj.get("local_path").asString();
+    capture.bytes = static_cast<unsigned long long>(obj.get("bytes").asInt());
+    capture.complete = obj.get("complete").asBool();
+    capture.note = obj.get("note").asString();
+    return capture;
+}
+
 } // namespace
+
+const char* dataCaptureMethodName(DataCaptureMethod method) {
+    switch (method) {
+        case DataCaptureMethod::RootTar: return "root_tar";
+        case DataCaptureMethod::RunAsTar: return "run_as_tar";
+        case DataCaptureMethod::LegacyAdbBackup: return "legacy_adb_backup";
+        case DataCaptureMethod::None: return "none";
+    }
+    return "none";
+}
+
+DataCaptureMethod dataCaptureMethodFromName(const std::string& name) {
+    if (name == "root_tar") return DataCaptureMethod::RootTar;
+    if (name == "run_as_tar") return DataCaptureMethod::RunAsTar;
+    if (name == "legacy_adb_backup") return DataCaptureMethod::LegacyAdbBackup;
+    return DataCaptureMethod::None;
+}
 
 std::string Manifest::toJson() const {
     JsonValue root = JsonValue::makeObject();
@@ -101,6 +151,10 @@ std::string Manifest::toJson() const {
     root.set("shared_storage_archive_sha256", sharedStorageArchiveSha256);
 
     root.set("legacy_adb_backup_file", legacyAdbBackupFile);
+
+    JsonValue filesystemJson = JsonValue::makeArray();
+    for (const auto& capture : filesystemCaptures) filesystemJson.push_back(filesystemCaptureToJson(capture));
+    root.set("filesystem_captures", filesystemJson);
 
     JsonValue packagesJson = JsonValue::makeArray();
     for (const auto& pkg : packages) packagesJson.push_back(packageToJson(pkg));
@@ -128,9 +182,16 @@ Manifest Manifest::fromJson(const std::string& text) {
 
     manifest.legacyAdbBackupFile = root.get("legacy_adb_backup_file").asString();
 
+    // Bound to a named value: get() returns by value, so iterating
+    // get(...).items() directly would walk a destroyed temporary.
+    JsonValue capturesJson = root.get("filesystem_captures");
+    for (const auto& captureJson : capturesJson.items()) {
+        manifest.filesystemCaptures.push_back(filesystemCaptureFromJson(captureJson));
+    }
+
     JsonValue packagesJson = root.get("packages");
     for (const auto& pkgJson : packagesJson.items()) {
-        manifest.packages.push_back(packageFromJson(pkgJson));
+        manifest.packages.push_back(packageFromJson(pkgJson, manifest.mode));
     }
 
     return manifest;

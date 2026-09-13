@@ -1,5 +1,6 @@
 #include "abp/AdbClient.h"
 
+#include <cstring>
 #include <sstream>
 
 #include "abp/FsUtil.h"
@@ -41,20 +42,31 @@ std::vector<DeviceInfo> AdbClient::listConnectedDevices() {
         return devices;
     }
 
+    // adb may print daemon chatter ("* daemon not running; starting now ...")
+    // before the header, so entries are recognised by shape -- exactly two or
+    // more whitespace-separated fields whose second field is a known adb
+    // connection state -- rather than by "everything after the first line".
+    auto isDeviceState = [](const std::string& state) {
+        return state == "device" || state == "offline" || state == "unauthorized" ||
+               state == "bootloader" || state == "recovery" || state == "sideload" ||
+               state == "rescue" || state == "connecting" || state == "authorizing" ||
+               state == "host" || state == "no";  // "no permissions; see <url>"
+    };
+
     std::istringstream stream(r.stdOut);
     std::string line;
-    bool first = true;
     while (std::getline(stream, line)) {
-        if (first) {
-            first = false;
-            continue; // "List of devices attached"
-        }
         std::string trimmed = strutil::trim(line);
         if (trimmed.empty()) continue;
+        if (strutil::startsWith(trimmed, "*")) continue;                     // daemon chatter
+        if (strutil::startsWith(trimmed, "List of devices")) continue;       // header
+        if (strutil::startsWith(trimmed, "adb:")) continue;                  // adb error text
 
         std::istringstream tokens(trimmed);
         DeviceInfo info;
-        tokens >> info.serial >> info.state;
+        if (!(tokens >> info.serial >> info.state)) continue;
+        if (!isDeviceState(info.state)) continue;
+        if (info.state == "no") info.state = "no permissions";
 
         std::string kv;
         while (tokens >> kv) {
@@ -62,8 +74,10 @@ std::vector<DeviceInfo> AdbClient::listConnectedDevices() {
             if (pos == std::string::npos) continue;
             std::string key = kv.substr(0, pos);
             std::string value = kv.substr(pos + 1);
+            // Only `model` maps onto a DeviceInfo field here. `adb devices -l`
+            // reports product/device/transport_id, none of which is the
+            // manufacturer -- that comes from getprop in queryDeviceInfo().
             if (key == "model") info.model = value;
-            if (key == "product") info.manufacturer = value;
         }
         devices.push_back(std::move(info));
     }
@@ -72,9 +86,13 @@ std::vector<DeviceInfo> AdbClient::listConnectedDevices() {
 
 bool AdbClient::isConnected() const {
     for (const auto& device : listConnectedDevices()) {
-        if (serial_.empty() || device.serial == serial_) {
-            return device.isReady();
+        if (!serial_.empty()) {
+            if (device.serial == serial_) return device.isReady();
+            continue;
         }
+        // No serial pinned: any ready device will do. Keep looking past
+        // offline/unauthorized entries instead of judging by the first one.
+        if (device.isReady()) return true;
     }
     return false;
 }
@@ -100,12 +118,36 @@ bool AdbClient::push(const std::string& localPath, const std::string& remotePath
     return Process::run(args).ok();
 }
 
-bool AdbClient::pull(const std::string& remotePath, const std::string& localPath) const {
+bool AdbClient::pull(const std::string& remotePath, const std::string& localPath, bool showProgress) const {
     auto args = baseArgs();
     args.push_back("pull");
     args.push_back(remotePath);
     args.push_back(localPath);
-    return Process::run(args).ok();
+    return showProgress ? Process::runInheritStdio(args).ok() : Process::run(args).ok();
+}
+
+bool AdbClient::pullTree(const std::string& remotePath, const std::string& localPath, bool* sawErrors,
+                          std::string* errorText) const {
+    auto args = baseArgs();
+    args.push_back("pull");
+    args.push_back("-a"); // Preserve mtime and mode.
+    args.push_back(remotePath);
+    args.push_back(localPath);
+
+    ProcessResult r = Process::run(args);
+    if (errorText != nullptr) *errorText = strutil::trim(r.stdErr);
+
+    // adb keeps going past a file it cannot read and still exits 0, so the
+    // exit code alone would call a half-copied /data a clean capture.
+    if (sawErrors != nullptr) {
+        const std::string& err = r.stdErr;
+        *sawErrors = err.find("Permission denied") != std::string::npos ||
+                     err.find("permission denied") != std::string::npos ||
+                     err.find("failed to copy") != std::string::npos ||
+                     err.find("couldn't read") != std::string::npos ||
+                     err.find("skipping") != std::string::npos;
+    }
+    return r.ok();
 }
 
 bool AdbClient::installApks(const std::vector<std::string>& localApkPaths, bool reinstall) const {
@@ -123,7 +165,16 @@ bool AdbClient::installApks(const std::vector<std::string>& localApkPaths, bool 
     }
 
     ProcessResult r = Process::run(args);
-    return r.ok() && r.stdOut.find("Success") != std::string::npos;
+    if (!r.ok()) return false;
+    // Which stream carries "Success" varies between adb releases, and some
+    // report failure only in the text while still exiting 0.
+    const bool sawSuccess = r.stdOut.find("Success") != std::string::npos ||
+                            r.stdErr.find("Success") != std::string::npos;
+    const bool sawFailure = r.stdOut.find("Failure") != std::string::npos ||
+                            r.stdErr.find("Failure") != std::string::npos ||
+                            r.stdOut.find("Error:") != std::string::npos ||
+                            r.stdErr.find("Error:") != std::string::npos;
+    return sawSuccess && !sawFailure;
 }
 
 bool AdbClient::execOutToFile(const std::string& command, const std::string& localFilePath) const {
@@ -177,14 +228,17 @@ RootAccess AdbClient::detectRoot() const {
         return access;
     }
 
-    std::string which = shellText("which su 2>/dev/null || command -v su 2>/dev/null", &ok);
+    std::string which = shellText("command -v su 2>/dev/null || which su 2>/dev/null", &ok);
     if (!ok || which.empty()) {
         return access; // RootMethod::None
     }
 
+    // `su -c id -u` is ambiguous: several su implementations treat only the
+    // first word as the command and pass "-u" to su itself. Quoting keeps the
+    // whole thing together as one command for every implementation.
     bool suOk = false;
-    std::string suUid = shellText("su -c id -u 2>/dev/null", &suOk);
-    if (suOk && suUid == "0") {
+    std::string suUid = shellText("su -c " + strutil::shellQuote("id -u") + " 2>/dev/null", &suOk);
+    if (suOk && strutil::trim(suUid) == "0") {
         access.method = RootMethod::SuBinary;
     }
     return access;
@@ -193,6 +247,17 @@ RootAccess AdbClient::detectRoot() const {
 DeviceInfo AdbClient::queryDeviceInfo() const {
     DeviceInfo info;
     info.serial = serial_;
+
+    // Fill in the serial and state from `adb devices` when the caller did not
+    // pin one, so the manifest records which device was actually captured.
+    for (const auto& listed : listConnectedDevices()) {
+        if (serial_.empty() ? listed.isReady() : listed.serial == serial_) {
+            info.serial = listed.serial;
+            info.state = listed.state;
+            break;
+        }
+    }
+
     info.model = shellText("getprop ro.product.model");
     info.manufacturer = shellText("getprop ro.product.manufacturer");
     info.androidRelease = shellText("getprop ro.build.version.release");
@@ -230,9 +295,9 @@ std::vector<std::string> AdbClient::packageApkPaths(const std::string& packageNa
 std::vector<PackageInfo> AdbClient::listPackages(bool includeSystemApps) const {
     std::vector<PackageInfo> result;
 
-    std::string cmd = includeSystemApps ? "pm list packages -f" : "pm list packages -f -3";
+    const std::string listCmd = includeSystemApps ? "pm list packages -f" : "pm list packages -f -3";
     bool ok = false;
-    std::string output = shellText(cmd, &ok);
+    std::string output = shellText(listCmd, &ok);
     if (!ok) return result;
 
     for (const auto& rawLine : strutil::split(output, '\n')) {
@@ -249,17 +314,108 @@ std::vector<PackageInfo> AdbClient::listPackages(bool includeSystemApps) const {
 
         PackageInfo info;
         info.name = pkgName;
-        info.apkPaths = packageApkPaths(pkgName);
-        if (info.apkPaths.empty() && !apkPath.empty()) {
-            info.apkPaths.push_back(apkPath);
-        }
+        // The base APK reported by `pm list packages -f`. Split APKs are
+        // filled in by resolveApkPaths(), which the caller runs once for the
+        // packages it actually cares about.
+        if (!apkPath.empty()) info.apkPaths.push_back(apkPath);
         info.isSystemApp = strutil::startsWith(apkPath, "/system/") ||
                             strutil::startsWith(apkPath, "/product/") ||
                             strutil::startsWith(apkPath, "/vendor/") ||
-                            strutil::startsWith(apkPath, "/apex/");
+                            strutil::startsWith(apkPath, "/apex/") ||
+                            strutil::startsWith(apkPath, "/system_ext/");
         result.push_back(std::move(info));
     }
     return result;
+}
+
+std::string AdbClient::asPackage(const std::string& packageName, const std::string& command) {
+    return "run-as " + strutil::shellQuote(packageName) + " " + command;
+}
+
+std::vector<std::string> AdbClient::packagesSupportingRunAs(const std::vector<std::string>& packageNames) const {
+    std::vector<std::string> supported;
+    if (packageNames.empty()) return supported;
+
+    // `run-as <pkg> id -u` succeeds only for a debuggable package that is
+    // installed for the current user. Probing them one at a time would cost an
+    // adb round trip each, so the whole probe runs as one on-device script
+    // that prints a marker line per package that answered.
+    static const char* kMarker = "@@abp-runas:";
+
+    std::string script;
+    script.reserve(packageNames.size() * 48);
+    for (const auto& name : packageNames) {
+        if (!strutil::isValidPackageName(name)) continue;
+        const std::string quoted = strutil::shellQuote(name);
+        script += "run-as " + quoted + " id -u >/dev/null 2>&1 && echo " +
+                  strutil::shellQuote(std::string(kMarker) + name) + "; ";
+    }
+    if (script.empty()) return supported;
+
+    bool ok = false;
+    const std::string output = shellText(script, &ok);
+    // The script's own exit status is that of its last command, which says
+    // nothing about the packages before it, so the output is parsed either way.
+
+    for (const auto& rawLine : strutil::split(output, '\n')) {
+        const std::string line = strutil::trim(rawLine);
+        if (!strutil::startsWith(line, kMarker)) continue;
+        std::string name = line.substr(std::strlen(kMarker));
+        // Only report back packages the caller actually asked about.
+        for (const auto& requested : packageNames) {
+            if (requested == name) {
+                supported.push_back(std::move(name));
+                break;
+            }
+        }
+    }
+    return supported;
+}
+
+void AdbClient::resolveApkPaths(std::vector<PackageInfo>& packages) const {
+    if (packages.empty()) return;
+
+    // Asking `pm path` per package costs one adb round trip each, which is
+    // tens of seconds on a device with a few hundred apps. Instead run the
+    // whole loop in a single on-device shell, delimiting each package's
+    // output with a marker line.
+    static const char* kMarker = "@@abp:";
+
+    std::string script;
+    script.reserve(packages.size() * 32);
+    for (const auto& pkg : packages) {
+        if (!strutil::isValidPackageName(pkg.name)) continue;
+        script += "echo " + strutil::shellQuote(std::string(kMarker) + pkg.name) + "; pm path " +
+                  strutil::shellQuote(pkg.name) + " 2>/dev/null; ";
+    }
+    if (script.empty()) return;
+
+    bool ok = false;
+    std::string output = shellText(script, &ok);
+    if (!ok) return;
+
+    // Index the reply by package name, then apply it. A package the device
+    // did not answer for keeps the base path found by listPackages().
+    std::string current;
+    std::vector<std::pair<std::string, std::vector<std::string>>> found;
+    for (const auto& rawLine : strutil::split(output, '\n')) {
+        std::string line = strutil::trim(rawLine);
+        if (strutil::startsWith(line, kMarker)) {
+            current = line.substr(std::strlen(kMarker));
+            found.emplace_back(current, std::vector<std::string>{});
+        } else if (!found.empty() && strutil::startsWith(line, "package:")) {
+            found.back().second.push_back(line.substr(std::string("package:").size()));
+        }
+    }
+
+    for (auto& pkg : packages) {
+        for (const auto& entry : found) {
+            if (entry.first == pkg.name && !entry.second.empty()) {
+                pkg.apkPaths = entry.second;
+                break;
+            }
+        }
+    }
 }
 
 } // namespace abp
