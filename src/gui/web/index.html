@@ -1,0 +1,1054 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>abp — Android backup</title>
+<style>
+:root {
+    color-scheme: light dark;
+    --bg: #0f1115;
+    --panel: #161a22;
+    --panel-2: #1c2230;
+    --border: #262d3a;
+    --text: #e6e9ef;
+    --muted: #97a0b0;
+    --accent: #4c9aff;
+    --accent-text: #04122a;
+    --good: #3ddc84;
+    --warn: #ffb02e;
+    --bad: #ff6b6b;
+    --radius: 10px;
+}
+@media (prefers-color-scheme: light) {
+    :root {
+        --bg: #f5f6f8;
+        --panel: #ffffff;
+        --panel-2: #f0f2f6;
+        --border: #d8dce4;
+        --text: #161a22;
+        --muted: #5d6675;
+        --accent: #1b6ef3;
+        --accent-text: #ffffff;
+        --good: #16794a;
+        --warn: #9a6400;
+        --bad: #c0392b;
+    }
+}
+* { box-sizing: border-box; }
+body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+a { color: var(--accent); }
+.topbar {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    background: var(--panel);
+}
+header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 14px 20px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+}
+header h1 { font-size: 17px; margin: 0; font-weight: 650; letter-spacing: .2px; }
+header .version { color: var(--muted); font-size: 12px; }
+header .spacer { flex: 1; }
+nav { display: flex; gap: 4px; padding: 0 20px; background: var(--panel); border-bottom: 1px solid var(--border); overflow-x: auto; }
+nav button {
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--muted);
+    padding: 10px 14px;
+    font: inherit;
+    cursor: pointer;
+    white-space: nowrap;
+}
+nav button:hover { color: var(--text); }
+nav button.active { color: var(--text); border-bottom-color: var(--accent); }
+main { padding: 20px; max-width: 1100px; margin: 0 auto 160px; }
+section.view { display: none; }
+section.view.active { display: block; }
+h2 { font-size: 16px; margin: 0 0 4px; }
+p.hint { color: var(--muted); margin: 0 0 16px; }
+.card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+    margin-bottom: 14px;
+}
+.card h3 { margin: 0 0 10px; font-size: 14px; }
+.row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+label.field { display: block; margin-bottom: 12px; }
+label.field > span { display: block; color: var(--muted); font-size: 12px; margin-bottom: 4px; }
+input[type=text], select {
+    width: 100%;
+    padding: 8px 10px;
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font: inherit;
+}
+input[type=text]:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+button.btn {
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 14px;
+    font: inherit;
+    cursor: pointer;
+}
+button.btn:hover:not(:disabled) { border-color: var(--accent); }
+button.btn:disabled { opacity: .5; cursor: not-allowed; }
+button.btn.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+button.btn.danger { border-color: var(--bad); color: var(--bad); }
+button.btn.small { padding: 4px 9px; font-size: 12px; }
+.toggles { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; }
+.toggle { display: flex; gap: 8px; align-items: flex-start; padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-2); cursor: pointer; }
+.toggle span.t { font-weight: 550; }
+.toggle small { display: block; color: var(--muted); }
+.badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; border: 1px solid var(--border); color: var(--muted); }
+.badge.good { color: var(--good); border-color: var(--good); }
+.badge.warn { color: var(--warn); border-color: var(--warn); }
+.badge.bad { color: var(--bad); border-color: var(--bad); }
+.device {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px;
+    background: var(--panel);
+    cursor: pointer;
+}
+.device.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.device .serial { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--muted); }
+.device h4 { margin: 0 0 6px; font-size: 15px; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { color: var(--muted); font-weight: 600; position: sticky; top: 0; background: var(--panel); }
+td.num, th.num { text-align: right; white-space: nowrap; }
+.scroll { max-height: 340px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.muted { color: var(--muted); }
+.err { color: var(--bad); }
+.pkg-list { max-height: 300px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; padding: 6px; background: var(--panel-2); }
+.pkg-list label { display: flex; gap: 8px; align-items: center; padding: 3px 6px; border-radius: 6px; }
+.pkg-list label:hover { background: var(--panel); }
+.crumbs { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; font-size: 13px; }
+.crumbs button { background: none; border: none; color: var(--accent); cursor: pointer; font: inherit; padding: 0; }
+.banner { padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel-2); margin-bottom: 14px; }
+.banner.bad { border-color: var(--bad); color: var(--bad); }
+.banner.warn { border-color: var(--warn); color: var(--warn); }
+#job {
+    position: fixed;
+    left: 0; right: 0; bottom: 0;
+    background: var(--panel);
+    border-top: 1px solid var(--border);
+    z-index: 10;
+    display: none;
+}
+#job.visible { display: block; }
+#job .bar { display: flex; align-items: center; gap: 12px; padding: 10px 20px; cursor: pointer; }
+#job .bar .title { font-weight: 600; }
+#job pre {
+    margin: 0;
+    padding: 12px 20px;
+    max-height: 260px;
+    overflow: auto;
+    background: var(--bg);
+    border-top: 1px solid var(--border);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+#job.collapsed pre { display: none; }
+#job .line.warn { color: var(--warn); }
+#job .line.error { color: var(--bad); }
+#job .line.debug { color: var(--muted); }
+.spinner {
+    width: 14px; height: 14px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin .8s linear infinite;
+    display: inline-block;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+dialog {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--panel);
+    color: var(--text);
+    padding: 18px;
+    max-width: 520px;
+}
+dialog::backdrop { background: rgba(0,0,0,.5); }
+.toast {
+    position: fixed; right: 16px; top: 70px; z-index: 20;
+    background: var(--panel); border: 1px solid var(--bad); color: var(--bad);
+    padding: 10px 14px; border-radius: 8px; max-width: 420px; display: none;
+}
+.toast.visible { display: block; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+<header>
+    <h1>📱🔒 abp</h1>
+    <span class="version" id="version"></span>
+    <span class="spacer"></span>
+    <span id="adb-state" class="badge"></span>
+    <button class="btn small" id="stop-server" title="Stop the abp gui server">Stop server</button>
+</header>
+
+<nav>
+    <button data-view="devices" class="active">Devices</button>
+    <button data-view="backup">Back up</button>
+    <button data-view="restore">Restore</button>
+    <button data-view="explore">Explore backups</button>
+</nav>
+</div>
+
+<main>
+
+<section class="view active" id="view-devices">
+    <h2>Connected devices</h2>
+    <p class="hint">Pick the device backups and restores should target. Everything here comes from <span class="mono">adb</span> on this machine.</p>
+    <div class="row" style="margin-bottom:12px">
+        <button class="btn" id="refresh-devices">Refresh</button>
+        <span class="muted" id="devices-status"></span>
+    </div>
+    <div class="grid" id="devices"></div>
+</section>
+
+<section class="view" id="view-backup">
+    <h2>Back up a device</h2>
+    <p class="hint">Captures APKs, private app data and shared storage into a new backup directory.</p>
+    <div id="backup-device-banner"></div>
+
+    <div class="card">
+        <h3>Destination</h3>
+        <label class="field">
+            <span>Output directory (created if missing)</span>
+            <input type="text" id="backup-output" placeholder="~/abp-backups/my-phone">
+        </label>
+        <div class="row"><button class="btn small" id="suggest-output">Suggest a name</button></div>
+    </div>
+
+    <div class="card">
+        <h3>What to capture</h3>
+        <div class="toggles">
+            <label class="toggle"><input type="checkbox" id="b-apks" checked><span><span class="t">APKs</span><small>base + split APK files</small></span></label>
+            <label class="toggle"><input type="checkbox" id="b-data" checked><span><span class="t">App data</span><small>private per-app data</small></span></label>
+            <label class="toggle"><input type="checkbox" id="b-shared" checked><span><span class="t">Shared storage</span><small>/sdcard photos, downloads…</small></span></label>
+            <label class="toggle"><input type="checkbox" id="b-system"><span><span class="t">System apps</span><small>off by default</small></span></label>
+        </div>
+    </div>
+
+    <div class="card">
+        <h3>Backend</h3>
+        <div class="row">
+            <label class="toggle"><input type="radio" name="b-mode" value="auto" checked><span><span class="t">Auto</span><small>root if available</small></span></label>
+            <label class="toggle"><input type="radio" name="b-mode" value="root"><span><span class="t">Root</span><small>fail if unavailable</small></span></label>
+            <label class="toggle"><input type="radio" name="b-mode" value="standard"><span><span class="t">Standard</span><small>adb backup, no root</small></span></label>
+        </div>
+        <p class="hint" style="margin:10px 0 0">Standard mode needs you to confirm the backup on the device screen, and only captures apps that allow it.</p>
+    </div>
+
+    <div class="card">
+        <h3>Packages</h3>
+        <div class="row" style="margin-bottom:10px">
+            <label class="toggle" style="flex:0 0 auto"><input type="checkbox" id="b-select-packages"><span class="t">Choose specific packages</span></label>
+            <button class="btn small" id="load-packages" disabled>Load from device</button>
+            <span class="muted" id="packages-status"></span>
+        </div>
+        <div id="package-picker" style="display:none">
+            <div class="row" style="margin-bottom:8px">
+                <input type="text" id="package-filter" placeholder="Filter packages…" style="flex:1 1 220px">
+                <button class="btn small" id="pkg-all">Select all</button>
+                <button class="btn small" id="pkg-none">Select none</button>
+            </div>
+            <div class="pkg-list" id="package-list"></div>
+        </div>
+    </div>
+
+    <div class="row">
+        <button class="btn primary" id="start-backup">Start backup</button>
+        <span class="muted" id="backup-hint"></span>
+    </div>
+</section>
+
+<section class="view" id="view-restore">
+    <h2>Restore a backup</h2>
+    <p class="hint">Reinstalls APKs and writes app data back onto a device. The backup's manifest decides which mechanism is used.</p>
+    <div id="restore-device-banner"></div>
+
+    <div class="card">
+        <h3>Source backup</h3>
+        <div class="row">
+            <input type="text" id="restore-input" placeholder="~/abp-backups/my-phone" style="flex:1 1 320px">
+            <button class="btn" id="load-restore">Load</button>
+        </div>
+        <div id="restore-manifest" style="margin-top:12px"></div>
+    </div>
+
+    <div class="card">
+        <h3>What to restore</h3>
+        <div class="toggles">
+            <label class="toggle"><input type="checkbox" id="r-apks" checked><span><span class="t">APKs</span><small>reinstall apps</small></span></label>
+            <label class="toggle"><input type="checkbox" id="r-data" checked><span><span class="t">App data</span><small>overwrites existing data</small></span></label>
+            <label class="toggle"><input type="checkbox" id="r-shared" checked><span><span class="t">Shared storage</span><small>pushes /sdcard back</small></span></label>
+        </div>
+    </div>
+
+    <div class="card" id="restore-packages-card" style="display:none">
+        <h3>Packages to restore</h3>
+        <div class="row" style="margin-bottom:8px">
+            <input type="text" id="restore-filter" placeholder="Filter packages…" style="flex:1 1 220px">
+            <button class="btn small" id="r-pkg-all">Select all</button>
+            <button class="btn small" id="r-pkg-none">Select none</button>
+        </div>
+        <div class="pkg-list" id="restore-package-list"></div>
+    </div>
+
+    <div class="row">
+        <button class="btn primary" id="start-restore" disabled>Start restore</button>
+        <span class="muted" id="restore-hint"></span>
+    </div>
+</section>
+
+<section class="view" id="view-explore">
+    <h2>Explore backups</h2>
+    <p class="hint">Reads <span class="mono">manifest.json</span> from every backup found under a folder — no device needed.</p>
+    <div class="card">
+        <div class="row">
+            <input type="text" id="explore-root" placeholder="~/abp-backups" style="flex:1 1 320px">
+            <button class="btn" id="scan-backups">Scan</button>
+            <span class="muted" id="explore-status"></span>
+        </div>
+    </div>
+    <div class="grid" id="backup-list"></div>
+    <div id="backup-detail"></div>
+</section>
+
+</main>
+
+<div id="job" class="collapsed">
+    <div class="bar" id="job-bar">
+        <span id="job-icon"></span>
+        <span class="title" id="job-title"></span>
+        <span class="muted mono" id="job-target"></span>
+        <span class="spacer" style="flex:1"></span>
+        <span class="muted" id="job-toggle-hint">click to expand</span>
+        <button class="btn small" id="job-dismiss" style="display:none">Dismiss</button>
+    </div>
+    <pre id="job-log"></pre>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<dialog id="confirm">
+    <h3 id="confirm-title" style="margin-top:0"></h3>
+    <p id="confirm-body"></p>
+    <div class="row" style="justify-content:flex-end">
+        <button class="btn" id="confirm-cancel">Cancel</button>
+        <button class="btn primary" id="confirm-ok">Continue</button>
+    </div>
+</dialog>
+
+<script>
+"use strict";
+
+const params = new URLSearchParams(location.search);
+let token = params.get("token");
+if (token) {
+    try { sessionStorage.setItem("abpToken", token); } catch (e) { /* private mode */ }
+    history.replaceState(null, "", location.pathname);
+} else {
+    try { token = sessionStorage.getItem("abpToken") || ""; } catch (e) { token = ""; }
+}
+
+const state = {
+    status: null,
+    devices: [],
+    serial: "",
+    packages: [],
+    backups: [],
+    manifest: null,
+    manifestPath: "",
+    restorePackages: [],
+    logShown: 0,
+    jobId: 0,
+    polling: null,
+};
+
+const $ = (id) => document.getElementById(id);
+
+function showError(message) {
+    const toast = $("toast");
+    toast.textContent = message;
+    toast.classList.add("visible");
+    clearTimeout(showError.timer);
+    showError.timer = setTimeout(() => toast.classList.remove("visible"), 6000);
+}
+
+async function api(path, options = {}) {
+    const response = await fetch(path, {
+        method: options.method || "GET",
+        headers: { "X-Abp-Token": token, "Content-Type": "application/json" },
+        body: options.body ? JSON.stringify(options.body) : undefined,
+    });
+    let payload = {};
+    try { payload = await response.json(); } catch (e) { payload = {}; }
+    if (!response.ok) throw new Error(payload.error || (response.status + " " + response.statusText));
+    return payload;
+}
+
+function ask(title, body) {
+    return new Promise((resolve) => {
+        $("confirm-title").textContent = title;
+        $("confirm-body").textContent = body;
+        const dialog = $("confirm");
+        const done = (value) => { dialog.close(); resolve(value); };
+        $("confirm-ok").onclick = () => done(true);
+        $("confirm-cancel").onclick = () => done(false);
+        dialog.showModal();
+    });
+}
+
+function el(tag, attrs = {}, ...children) {
+    const node = document.createElement(tag);
+    for (const [key, value] of Object.entries(attrs)) {
+        if (key === "class") node.className = value;
+        else if (key === "text") node.textContent = value;
+        else if (key.startsWith("on")) node.addEventListener(key.slice(2), value);
+        else if (value !== null && value !== undefined) node.setAttribute(key, value);
+    }
+    for (const child of children) {
+        if (child === null || child === undefined) continue;
+        node.append(child);
+    }
+    return node;
+}
+
+/* ---------------------------------------------------------------- views */
+
+document.querySelectorAll("nav button").forEach((button) => {
+    button.addEventListener("click", () => selectView(button.dataset.view));
+});
+
+function selectView(name) {
+    document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("active", b.dataset.view === name));
+    document.querySelectorAll("section.view").forEach((s) => s.classList.toggle("active", s.id === "view-" + name));
+    if (name === "explore" && state.backups.length === 0) scanBackups();
+    if (name === "backup" || name === "restore") renderDeviceBanners();
+}
+
+/* -------------------------------------------------------------- devices */
+
+async function loadStatus() {
+    try {
+        state.status = await api("/api/status");
+    } catch (error) {
+        showError(error.message);
+        return;
+    }
+    $("version").textContent = state.status.version;
+    const adb = $("adb-state");
+    adb.textContent = state.status.adb_available ? "adb ready" : "adb not found";
+    adb.className = "badge " + (state.status.adb_available ? "good" : "bad");
+    if (!$("explore-root").value) $("explore-root").value = state.status.backup_root;
+    applyJob(state.status.job, true);
+}
+
+async function loadDevices() {
+    $("devices-status").textContent = "Looking for devices…";
+    try {
+        const payload = await api("/api/devices");
+        state.devices = payload.devices || [];
+    } catch (error) {
+        $("devices-status").textContent = "";
+        showError(error.message);
+        return;
+    }
+    $("devices-status").textContent = "";
+    if (state.serial && !state.devices.some((d) => d.serial === state.serial)) state.serial = "";
+    if (!state.serial) {
+        const ready = state.devices.find((d) => d.ready);
+        if (ready) state.serial = ready.serial;
+    }
+    renderDevices();
+    renderDeviceBanners();
+}
+
+function renderDevices() {
+    const container = $("devices");
+    container.textContent = "";
+    if (state.devices.length === 0) {
+        container.append(el("div", { class: "banner" },
+            "No devices found. Connect the device over USB, enable USB debugging, and accept the “Allow USB debugging?” prompt."));
+        return;
+    }
+    for (const device of state.devices) {
+        const card = el("div", { class: "device" + (device.serial === state.serial ? " selected" : "") });
+        card.addEventListener("click", () => {
+            if (!device.ready) return;
+            state.serial = device.serial;
+            state.packages = [];
+            renderDevices();
+            renderDeviceBanners();
+            renderPackages();
+        });
+        card.append(el("h4", { text: [device.manufacturer, device.model].filter(Boolean).join(" ") || "Android device" }));
+        card.append(el("div", { class: "serial", text: device.serial }));
+        const badges = el("div", { class: "row", style: "margin-top:8px" });
+        badges.append(el("span", { class: "badge " + (device.ready ? "good" : "bad"), text: device.state }));
+        if (device.ready) {
+            badges.append(el("span", { class: "badge", text: "Android " + (device.android_release || "?") + " · SDK " + device.sdk_int }));
+            badges.append(el("span", { class: "badge " + (device.rooted ? "good" : ""), text: device.rooted ? "root: " + device.root_method : "no root" }));
+        }
+        card.append(badges);
+        container.append(card);
+    }
+}
+
+function currentDevice() {
+    return state.devices.find((d) => d.serial === state.serial) || null;
+}
+
+function renderDeviceBanners() {
+    for (const id of ["backup-device-banner", "restore-device-banner"]) {
+        const node = $(id);
+        node.textContent = "";
+        const device = currentDevice();
+        if (!device) {
+            node.append(el("div", { class: "banner warn" }, "No device selected — pick one on the Devices tab first."));
+        } else {
+            const label = [device.manufacturer, device.model].filter(Boolean).join(" ") || device.serial;
+            node.append(el("div", { class: "banner" },
+                "Target: " + label + " (" + device.serial + ")" +
+                (device.rooted ? " · root available" : " · no root — standard mode")));
+        }
+    }
+    $("load-packages").disabled = !currentDevice();
+    $("start-backup").disabled = !currentDevice();
+    updateRestoreButton();
+}
+
+/* --------------------------------------------------------------- backup */
+
+$("refresh-devices").addEventListener("click", loadDevices);
+
+$("suggest-output").addEventListener("click", () => {
+    const device = currentDevice();
+    const name = (device && (device.model || device.serial) || "android").replace(/[^A-Za-z0-9._-]+/g, "-").toLowerCase();
+    const date = new Date().toISOString().slice(0, 10);
+    $("backup-output").value = "~/abp-backups/" + name + "-" + date;
+});
+
+$("b-select-packages").addEventListener("change", (event) => {
+    $("package-picker").style.display = event.target.checked ? "block" : "none";
+    if (event.target.checked && state.packages.length === 0 && currentDevice()) loadPackages();
+});
+
+$("load-packages").addEventListener("click", loadPackages);
+$("package-filter").addEventListener("input", renderPackages);
+$("pkg-all").addEventListener("click", () => setAllPackages(true));
+$("pkg-none").addEventListener("click", () => setAllPackages(false));
+
+async function loadPackages() {
+    const device = currentDevice();
+    if (!device) return;
+    $("packages-status").textContent = "Loading packages…";
+    try {
+        const payload = await api("/api/packages?serial=" + encodeURIComponent(device.serial) +
+            ($("b-system").checked ? "&system=1" : ""));
+        state.packages = (payload.packages || []).map((p) => ({ ...p, selected: true }));
+        $("packages-status").textContent = state.packages.length + " packages";
+    } catch (error) {
+        $("packages-status").textContent = "";
+        showError(error.message);
+        return;
+    }
+    renderPackages();
+}
+
+function setAllPackages(value) {
+    const filter = $("package-filter").value.toLowerCase();
+    for (const pkg of state.packages) {
+        if (!filter || pkg.name.toLowerCase().includes(filter)) pkg.selected = value;
+    }
+    renderPackages();
+}
+
+function renderPackages() {
+    const list = $("package-list");
+    list.textContent = "";
+    const filter = $("package-filter").value.toLowerCase();
+    const shown = state.packages.filter((p) => !filter || p.name.toLowerCase().includes(filter));
+    if (shown.length === 0) {
+        list.append(el("div", { class: "muted", text: state.packages.length ? "No package matches that filter." : "Load the package list from the device." }));
+        return;
+    }
+    for (const pkg of shown) {
+        const checkbox = el("input", { type: "checkbox" });
+        checkbox.checked = pkg.selected;
+        checkbox.addEventListener("change", () => { pkg.selected = checkbox.checked; });
+        const label = el("label", {}, checkbox, el("span", { class: "mono", text: pkg.name }));
+        if (pkg.system_app) label.append(el("span", { class: "badge", text: "system" }));
+        list.append(label);
+    }
+}
+
+$("start-backup").addEventListener("click", async () => {
+    const device = currentDevice();
+    if (!device) return;
+    const output = $("backup-output").value.trim();
+    if (!output) { showError("Choose an output directory first."); return; }
+
+    const body = {
+        serial: device.serial,
+        output: output,
+        include_apks: $("b-apks").checked,
+        include_data: $("b-data").checked,
+        include_shared: $("b-shared").checked,
+        include_system: $("b-system").checked,
+        mode: document.querySelector("input[name=b-mode]:checked").value,
+    };
+    if ($("b-select-packages").checked) {
+        const selected = state.packages.filter((p) => p.selected).map((p) => p.name);
+        if (selected.length === 0) { showError("Select at least one package, or turn off package selection."); return; }
+        body.only = selected;
+    }
+
+    const scope = [body.include_apks && "APKs", body.include_data && "app data", body.include_shared && "shared storage"]
+        .filter(Boolean).join(", ") || "nothing";
+    const ok = await ask("Start backup?", "Back up " + scope + " from " + device.serial + " into " + output + ".");
+    if (!ok) return;
+
+    try {
+        const payload = await api("/api/jobs/backup", { method: "POST", body });
+        applyJob(payload.job, true);
+    } catch (error) {
+        showError(error.message);
+    }
+});
+
+/* -------------------------------------------------------------- restore */
+
+$("load-restore").addEventListener("click", () => loadRestoreManifest($("restore-input").value.trim()));
+$("restore-filter").addEventListener("input", renderRestorePackages);
+$("r-pkg-all").addEventListener("click", () => setAllRestorePackages(true));
+$("r-pkg-none").addEventListener("click", () => setAllRestorePackages(false));
+
+async function loadRestoreManifest(path) {
+    if (!path) { showError("Enter the path of a backup directory."); return; }
+    $("restore-hint").textContent = "Loading manifest…";
+    try {
+        const payload = await api("/api/backup?path=" + encodeURIComponent(path));
+        state.manifest = payload.manifest;
+        state.manifestPath = payload.summary.path;
+        state.restorePackages = payload.manifest.packages.map((p) => ({ ...p, selected: true }));
+    } catch (error) {
+        state.manifest = null;
+        state.restorePackages = [];
+        $("restore-hint").textContent = "";
+        $("restore-manifest").textContent = "";
+        $("restore-packages-card").style.display = "none";
+        updateRestoreButton();
+        showError(error.message);
+        return;
+    }
+    $("restore-hint").textContent = "";
+    renderRestoreManifest();
+    renderRestorePackages();
+    updateRestoreButton();
+}
+
+function renderRestoreManifest() {
+    const node = $("restore-manifest");
+    node.textContent = "";
+    const manifest = state.manifest;
+    if (!manifest) return;
+
+    const device = manifest.device || {};
+    const facts = el("div", { class: "row" });
+    facts.append(el("span", { class: "badge " + (manifest.mode === "root" ? "good" : ""), text: manifest.mode + " mode" }));
+    facts.append(el("span", { class: "badge", text: manifest.packages.length + " packages" }));
+    facts.append(el("span", { class: "badge", text: "captured " + (manifest.created_at || "?") }));
+    facts.append(el("span", { class: "badge", text: [device.manufacturer, device.model].filter(Boolean).join(" ") || device.serial || "unknown device" }));
+    if (manifest.shared_storage_included) facts.append(el("span", { class: "badge", text: "shared storage " + manifest.shared_storage_size_human }));
+    node.append(facts);
+
+    const target = currentDevice();
+    if (manifest.mode === "root" && target && !target.rooted) {
+        node.append(el("div", { class: "banner warn", style: "margin-top:10px" },
+            "This backup needs root to restore app data, but the selected device is not rooted — only APKs will be reinstalled."));
+    }
+    $("restore-packages-card").style.display = "block";
+}
+
+function setAllRestorePackages(value) {
+    const filter = $("restore-filter").value.toLowerCase();
+    for (const pkg of state.restorePackages) {
+        if (!filter || pkg.name.toLowerCase().includes(filter)) pkg.selected = value;
+    }
+    renderRestorePackages();
+}
+
+function renderRestorePackages() {
+    const list = $("restore-package-list");
+    list.textContent = "";
+    const filter = $("restore-filter").value.toLowerCase();
+    const shown = state.restorePackages.filter((p) => !filter || p.name.toLowerCase().includes(filter));
+    if (shown.length === 0) {
+        list.append(el("div", { class: "muted", text: "No package matches that filter." }));
+        return;
+    }
+    for (const pkg of shown) {
+        const checkbox = el("input", { type: "checkbox" });
+        checkbox.checked = pkg.selected;
+        checkbox.addEventListener("change", () => { pkg.selected = checkbox.checked; updateRestoreButton(); });
+        const label = el("label", {}, checkbox, el("span", { class: "mono", text: pkg.name }));
+        if (pkg.apk_included) label.append(el("span", { class: "badge", text: pkg.apk_count + " apk" }));
+        if (pkg.data_included) label.append(el("span", { class: "badge good", text: pkg.data_size_human }));
+        if (pkg.error) label.append(el("span", { class: "badge bad", text: pkg.error }));
+        list.append(label);
+    }
+}
+
+function updateRestoreButton() {
+    const ready = !!state.manifest && !!currentDevice() && state.restorePackages.some((p) => p.selected);
+    const button = $("start-restore");
+    if (button) button.disabled = !ready;
+}
+
+$("start-restore").addEventListener("click", async () => {
+    const device = currentDevice();
+    if (!device || !state.manifest) return;
+    const selected = state.restorePackages.filter((p) => p.selected).map((p) => p.name);
+    const body = {
+        serial: device.serial,
+        input: state.manifestPath,
+        include_apks: $("r-apks").checked,
+        include_data: $("r-data").checked,
+        include_shared: $("r-shared").checked,
+    };
+    if (selected.length !== state.restorePackages.length) body.only = selected;
+
+    const ok = await ask("Start restore?",
+        "Restore " + selected.length + " package(s) onto " + device.serial +
+        ". Existing app data for those packages will be overwritten.");
+    if (!ok) return;
+
+    try {
+        const payload = await api("/api/jobs/restore", { method: "POST", body });
+        applyJob(payload.job, true);
+    } catch (error) {
+        showError(error.message);
+    }
+});
+
+/* -------------------------------------------------------------- explore */
+
+$("scan-backups").addEventListener("click", scanBackups);
+
+async function scanBackups() {
+    const root = $("explore-root").value.trim();
+    $("explore-status").textContent = "Scanning…";
+    try {
+        const payload = await api("/api/backups" + (root ? "?root=" + encodeURIComponent(root) : ""));
+        state.backups = payload.backups || [];
+        $("explore-root").value = payload.root;
+        $("explore-status").textContent = payload.exists
+            ? state.backups.length + " backup(s) found"
+            : "No such directory: " + payload.root;
+    } catch (error) {
+        $("explore-status").textContent = "";
+        showError(error.message);
+        return;
+    }
+    renderBackupList();
+}
+
+function renderBackupList() {
+    const container = $("backup-list");
+    container.textContent = "";
+    if (state.backups.length === 0) {
+        container.append(el("div", { class: "banner" }, "No backups under this folder. abp looks for directories containing a manifest.json."));
+        return;
+    }
+    for (const backup of state.backups) {
+        const card = el("div", { class: "device" });
+        card.addEventListener("click", () => openBackup(backup.path));
+        card.append(el("h4", { text: backup.name }));
+        card.append(el("div", { class: "serial", text: backup.created_at || "unknown date" }));
+        const badges = el("div", { class: "row", style: "margin-top:8px" });
+        if (backup.error) {
+            badges.append(el("span", { class: "badge bad", text: "unreadable manifest" }));
+        } else {
+            badges.append(el("span", { class: "badge " + (backup.mode === "root" ? "good" : ""), text: backup.mode || "?" }));
+            badges.append(el("span", { class: "badge", text: backup.package_count + " packages" }));
+            badges.append(el("span", { class: "badge", text: backup.disk_size_human }));
+            if (backup.packages_with_errors > 0) badges.append(el("span", { class: "badge warn", text: backup.packages_with_errors + " with errors" }));
+        }
+        card.append(badges);
+        card.append(el("div", { class: "muted mono", style: "margin-top:8px;font-size:11px", text: backup.path }));
+        container.append(card);
+    }
+}
+
+async function openBackup(path) {
+    const node = $("backup-detail");
+    node.textContent = "";
+    let payload;
+    try {
+        payload = await api("/api/backup?path=" + encodeURIComponent(path));
+    } catch (error) {
+        showError(error.message);
+        return;
+    }
+
+    const manifest = payload.manifest;
+    const summary = payload.summary;
+    const card = el("div", { class: "card" });
+    card.append(el("h3", { text: summary.name }));
+    card.append(el("div", { class: "muted mono", style: "margin-bottom:10px", text: summary.path }));
+
+    const facts = el("div", { class: "row", style: "margin-bottom:12px" });
+    facts.append(el("span", { class: "badge", text: "abp " + (manifest.abp_version || "?") }));
+    facts.append(el("span", { class: "badge " + (manifest.mode === "root" ? "good" : ""), text: manifest.mode + " mode" }));
+    facts.append(el("span", { class: "badge", text: manifest.created_at }));
+    facts.append(el("span", { class: "badge", text: summary.disk_size_human + " on disk" }));
+    card.append(facts);
+
+    const device = manifest.device || {};
+    card.append(el("div", { class: "muted", style: "margin-bottom:12px", text:
+        "Device: " + [device.manufacturer, device.model].filter(Boolean).join(" ") + " · " + (device.serial || "?") +
+        " · Android " + (device.android_release || "?") + " (SDK " + (device.sdk_int || 0) + ")" }));
+
+    const actions = el("div", { class: "row", style: "margin-bottom:14px" });
+    actions.append(el("button", { class: "btn primary", onclick: () => {
+        $("restore-input").value = summary.path;
+        selectView("restore");
+        loadRestoreManifest(summary.path);
+    }, text: "Restore this backup" }));
+    card.append(actions);
+
+    card.append(el("h3", { text: "Packages" }));
+    const scroll = el("div", { class: "scroll" });
+    const table = el("table");
+    const head = el("tr");
+    for (const column of ["Package", "APKs", "Data", "External", "Status"]) head.append(el("th", { text: column }));
+    table.append(head);
+    for (const pkg of manifest.packages) {
+        const row = el("tr");
+        row.append(el("td", { class: "mono", text: pkg.name }));
+        row.append(el("td", { class: "num", text: pkg.apk_included ? String(pkg.apk_count) : "—" }));
+        row.append(el("td", { class: "num", text: pkg.data_included ? pkg.data_size_human : "—" }));
+        row.append(el("td", { class: "num", text: pkg.external_data_included ? pkg.external_data_size_human : "—" }));
+        row.append(el("td", {}, pkg.error
+            ? el("span", { class: "err", text: pkg.error })
+            : el("span", { class: "badge good", text: "ok" })));
+        table.append(row);
+    }
+    scroll.append(table);
+    card.append(scroll);
+
+    card.append(el("h3", { style: "margin-top:16px", text: "Files" }));
+    const browser = el("div");
+    card.append(browser);
+    node.append(card);
+    node.scrollIntoView({ behavior: "smooth", block: "start" });
+    browseFiles(summary.path, "", browser);
+}
+
+async function browseFiles(backupPath, sub, container) {
+    let payload;
+    try {
+        payload = await api("/api/backup/files?path=" + encodeURIComponent(backupPath) + "&sub=" + encodeURIComponent(sub || "."));
+    } catch (error) {
+        showError(error.message);
+        return;
+    }
+    container.textContent = "";
+
+    const crumbs = el("div", { class: "crumbs" });
+    crumbs.append(el("button", { text: "backup root", onclick: () => browseFiles(backupPath, "", container) }));
+    let walked = "";
+    for (const part of (payload.sub || "").split("/").filter(Boolean)) {
+        walked = walked ? walked + "/" + part : part;
+        const here = walked;
+        crumbs.append(el("span", { class: "muted", text: "/" }));
+        crumbs.append(el("button", { text: part, onclick: () => browseFiles(backupPath, here, container) }));
+    }
+    container.append(crumbs);
+
+    const scroll = el("div", { class: "scroll" });
+    const table = el("table");
+    const head = el("tr");
+    head.append(el("th", { text: "Name" }));
+    head.append(el("th", { class: "num", text: "Size" }));
+    table.append(head);
+    if (payload.entries.length === 0) {
+        const row = el("tr");
+        row.append(el("td", { colspan: "2", class: "muted", text: "(empty)" }));
+        table.append(row);
+    }
+    for (const entry of payload.entries) {
+        const row = el("tr");
+        const name = entry.directory
+            ? el("button", { class: "btn small", onclick: () => browseFiles(backupPath, entry.path, container), text: "📁 " + entry.name })
+            : el("span", { class: "mono", text: "📄 " + entry.name });
+        row.append(el("td", {}, name));
+        row.append(el("td", { class: "num muted", text: entry.size_human }));
+        table.append(row);
+    }
+    scroll.append(table);
+    container.append(scroll);
+}
+
+/* ------------------------------------------------------------------ job */
+
+$("job-bar").addEventListener("click", (event) => {
+    if (event.target.id === "job-dismiss") return;
+    $("job").classList.toggle("collapsed");
+});
+
+$("job-dismiss").addEventListener("click", async (event) => {
+    event.stopPropagation();
+    try {
+        await api("/api/job/dismiss", { method: "POST" });
+    } catch (error) {
+        showError(error.message);
+        return;
+    }
+    state.jobId = 0;
+    state.logShown = 0;
+    $("job").classList.remove("visible");
+    $("job-log").textContent = "";
+});
+
+function applyJob(job, expand) {
+    const panel = $("job");
+    if (!job || !job.present) {
+        panel.classList.remove("visible");
+        stopPolling();
+        return;
+    }
+
+    if (job.id !== state.jobId) {
+        state.jobId = job.id;
+        state.logShown = 0;
+        $("job-log").textContent = "";
+    }
+
+    panel.classList.add("visible");
+    if (expand) panel.classList.remove("collapsed");
+
+    const running = job.state === "running";
+    $("job-icon").textContent = "";
+    $("job-icon").append(running ? el("span", { class: "spinner" })
+        : el("span", { text: job.state === "succeeded" ? "✅" : "❌" }));
+    $("job-title").textContent = (job.kind === "backup" ? "Backup" : "Restore") + " · " + job.state;
+    $("job-target").textContent = job.target;
+    $("job-dismiss").style.display = running ? "none" : "inline-block";
+
+    const log = $("job-log");
+    const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
+    for (const line of job.lines || []) {
+        log.append(el("div", { class: "line " + line.level, text: line.text }));
+    }
+    state.logShown = job.log_size;
+    if (atBottom) log.scrollTop = log.scrollHeight;
+
+    if (!running && job.result) appendResult(job);
+
+    if (running) startPolling();
+    else {
+        stopPolling();
+        loadDevices();
+        if (job.kind === "backup" && job.state === "succeeded") scanBackups();
+    }
+}
+
+function appendResult(job) {
+    const log = $("job-log");
+    if (log.dataset.resultFor === String(job.id)) return;
+    log.dataset.resultFor = String(job.id);
+
+    const result = job.result || {};
+    const lines = [];
+    if (job.kind === "backup") {
+        lines.push("Packages:       " + (result.package_count ?? 0));
+        lines.push("With app data:  " + (result.packages_with_data ?? 0));
+        lines.push("Errors:         " + (result.packages_with_errors ?? 0));
+        lines.push("Shared storage: " + (result.shared_storage_included ? "included" : "skipped"));
+        lines.push("Total size:     " + (result.total_size_human || "0 B"));
+        lines.push("Output:         " + (result.output_dir || job.target));
+    } else {
+        lines.push("Packages restored: " + (result.packages_restored ?? 0));
+        lines.push("Packages failed:   " + (result.packages_failed ?? 0));
+        lines.push("Shared storage:    " + (result.shared_storage_restored ? "restored" : "skipped"));
+    }
+    for (const message of result.messages || []) lines.push("error: " + message);
+
+    log.append(el("div", { class: "line", text: "" }));
+    for (const line of lines) log.append(el("div", { class: "line", text: line }));
+    log.scrollTop = log.scrollHeight;
+}
+
+function startPolling() {
+    if (state.polling) return;
+    state.polling = setInterval(async () => {
+        try {
+            const payload = await api("/api/job?since=" + state.logShown);
+            applyJob(payload.job, false);
+        } catch (error) {
+            /* The server may be shutting down; the next tick will retry. */
+        }
+    }, 900);
+}
+
+function stopPolling() {
+    if (!state.polling) return;
+    clearInterval(state.polling);
+    state.polling = null;
+}
+
+/* ------------------------------------------------------------- shutdown */
+
+$("stop-server").addEventListener("click", async () => {
+    const ok = await ask("Stop the abp GUI?", "The server will shut down and this page will stop working. The abp command in your terminal will exit.");
+    if (!ok) return;
+    try {
+        await api("/api/shutdown", { method: "POST" });
+        document.body.innerHTML = "<main><div class='card'><h3>abp gui stopped</h3>" +
+            "<p class='muted'>Run <span class='mono'>abp gui</span> again to start it back up.</p></div></main>";
+    } catch (error) {
+        showError(error.message);
+    }
+});
+
+/* ---------------------------------------------------------------- start */
+
+if (!token) {
+    showError("No API token. Open the URL abp printed in your terminal.");
+}
+loadStatus().then(loadDevices);
+</script>
+</body>
+</html>

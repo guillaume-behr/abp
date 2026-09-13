@@ -119,6 +119,32 @@ abp restore -i ~/backups/full --no-data --no-shared
 abp restore -i ~/backups/full --only com.example.one --no-shared
 ```
 
+## `abp gui [options]`
+
+Starts the local web GUI and (unless told not to) opens it in a browser:
+
+```
+$ abp gui
+abp 1.0.0 web GUI
+  Serving:      http://127.0.0.1:8787/?token=6f1c...
+  Backup root:  /home/you/abp-backups
+  Press Ctrl-C to stop.
+```
+
+| Option | Description |
+|---|---|
+| `--port PORT` | Port to listen on (default `8787`; `0` picks a free one and prints it). |
+| `--host ADDR` | Address to bind (default `127.0.0.1`). |
+| `-d, --backup-dir DIR` | Folder the "Explore backups" view starts from (default: the current directory). |
+| `--scan-depth N` | How many directory levels below that to search (default `2`). |
+| `--no-browser` | Print the URL instead of opening a browser. |
+| `-v, --verbose` | Include debug-level messages in the live job log. |
+
+The URL carries a random API token; open exactly the URL `abp` prints, or
+set `ABP_GUI_TOKEN` to choose the token yourself. The GUI can back up,
+restore and browse existing backups, and runs one backup/restore job at a
+time. See [GUI.md](GUI.md) for the full picture, including the JSON API.
+
 ## Exit codes
 
 | Code | Meaning |
@@ -126,6 +152,9 @@ abp restore -i ~/backups/full --only com.example.one --no-shared
 | 0    | Success. |
 | 1    | Operation ran but failed (no device, bad manifest, per-package restore failures, user declined confirmation). |
 | 2    | Usage error (bad flags, missing required option, unknown subcommand). |
+
+For `abp gui`, exit code 1 also covers "could not bind the port" — most
+often another `abp gui` already running on it.
 
 ## Troubleshooting
 

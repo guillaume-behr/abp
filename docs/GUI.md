@@ -1,0 +1,130 @@
+# 🖥️ The web GUI
+
+```sh
+abp gui
+```
+
+That starts a small HTTP server on `127.0.0.1:8787`, opens your browser at
+it, and gives you the same backup/restore/inspect functionality as the CLI
+— device discovery, a package picker, live progress, and a browser for
+backups already on disk.
+
+```mermaid
+flowchart LR
+    B["🌐 Browser<br/><sub>single-page app</sub>"] <-- "JSON over 127.0.0.1" --> S["🖥️ GuiServer<br/><sub>src/gui</sub>"]
+    S --> M["🧭 BackupManager<br/><sub>backup / restore jobs</sub>"]
+    S --> T["🗂️ BackupStore<br/><sub>read-only backup explorer</sub>"]
+    M --> D[📱 Device]
+    T --> F[("💾 backup directories")]
+```
+
+There is nothing to install: the page is compiled into the `abp` binary,
+loads no fonts, scripts or styles from the network, and talks only to the
+server that served it.
+
+## ⚙️ Options
+
+| Option | Default | Description |
+|---|---|---|
+| `--port PORT` | `8787` | Port to listen on. `0` picks a free one and prints it. |
+| `--host ADDR` | `127.0.0.1` | Address to bind. Loopback only unless you change it. |
+| `-d, --backup-dir DIR` | current directory | Where the **Explore backups** view starts looking. |
+| `--scan-depth N` | `2` | How many directory levels below that to search. |
+| `--no-browser` | — | Don't open a browser; just print the URL. |
+| `-v, --verbose` | — | Include debug-level lines in the live log. |
+
+`--adb-path` / `ABP_ADB_PATH` work here exactly as they do for the other
+subcommands.
+
+## 🧭 What each view does
+
+- **Devices** — everything `adb devices -l` can see, with model, Android
+  version and root status. Pick one; backups and restores target it.
+- **Back up** — choose an output directory, what to capture (APKs, app
+  data, shared storage, system apps), which backend to use, and
+  optionally an explicit package list pulled live from the device. The
+  same options as `abp backup`, with a confirmation step before anything
+  runs.
+- **Restore** — point at a backup directory, review what its
+  `manifest.json` says was captured, tick the packages to restore, and
+  go. Mirrors `abp restore`, including the warning when a root-mode
+  backup is being restored onto a device without root.
+- **Explore backups** — scans a folder for directories containing a
+  `manifest.json` and lists what each one holds: device, capture date,
+  backend, per-package archive sizes and checksums, per-package errors,
+  and a file browser over the backup directory itself. No device needed.
+
+While a backup or restore runs, its log streams into a drawer at the
+bottom of the page — the same messages the CLI prints, plus the final
+summary. One job runs at a time; starting a second while one is in
+flight is refused.
+
+## 🔒 Security model
+
+The GUI can install apps and overwrite app data on a connected device, so
+it is locked down by default:
+
+- **Loopback only.** It binds `127.0.0.1`, so nothing outside this machine
+  can reach it unless you pass `--host`.
+- **Token required.** A random token is generated at startup and included
+  in the URL `abp` prints. Every `/api/...` request must present it in an
+  `X-Abp-Token` header, which also means another site's JavaScript cannot
+  drive the API from your browser. Set `ABP_GUI_TOKEN` to pin the token
+  instead (handy when scripting against the API).
+- **Host header checked.** Requests arriving with an unexpected `Host`
+  are rejected, so a hostile page cannot use DNS rebinding to talk to the
+  server.
+- **Backup browsing is sandboxed.** The file browser resolves every path
+  inside the backup directory and refuses anything that escapes it, `..`
+  and symlinks included.
+
+Passing `--host 0.0.0.0` opts out of the first of those and makes the GUI
+reachable from your network; `abp` warns when you do. Anyone who can
+reach the port *and* has the token can then back up and restore your
+device, so don't do it on a network you don't trust.
+
+## 🔌 The HTTP API
+
+The GUI is a plain client of a small JSON API, which you can also drive
+yourself — for a dashboard, a cron job, or a script:
+
+```sh
+abp gui --no-browser &
+curl -H "X-Abp-Token: $TOKEN" http://127.0.0.1:8787/api/devices
+```
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `GET` | `/api/status` | abp version, adb availability, backup root, current job. |
+| `GET` | `/api/devices` | Connected devices (as `abp devices`). |
+| `GET` | `/api/device?serial=` | One device's details (as `abp info`). |
+| `GET` | `/api/packages?serial=&system=1` | Installed packages (as `abp list-packages`). |
+| `GET` | `/api/backups?root=DIR` | Backups found under `DIR`. |
+| `GET` | `/api/backup?path=DIR` | One backup's summary and full manifest. |
+| `GET` | `/api/backup/files?path=DIR&sub=REL` | Directory listing inside a backup. |
+| `POST` | `/api/jobs/backup` | Start a backup. Body mirrors the CLI options. |
+| `POST` | `/api/jobs/restore` | Start a restore. |
+| `GET` | `/api/job?since=N` | Job state plus log lines from index `N` on. |
+| `POST` | `/api/job/dismiss` | Forget a finished job. |
+| `POST` | `/api/shutdown` | Stop the server (what the "Stop server" button calls). |
+
+A backup request body looks like this; every field except `output` is
+optional and defaults to the same thing the CLI does:
+
+```json
+{
+  "serial": "ABC123",
+  "output": "~/abp-backups/pixel",
+  "include_apks": true,
+  "include_data": true,
+  "include_shared": true,
+  "include_system": false,
+  "mode": "auto",
+  "only": ["com.example.one"],
+  "exclude": []
+}
+```
+
+Errors come back as `{"error": "..."}` with a meaningful status code
+(`400` bad request, `403` bad token or sandbox escape, `404` unknown
+device or backup, `409` a job is already running).

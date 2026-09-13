@@ -5,7 +5,9 @@ directly below it:
 
 ```mermaid
 flowchart TB
-    CLI["🖥️ Cli<br/><sub>src/cli</sub>"]
+    CLI["⌨️ Cli<br/><sub>src/cli</sub>"]
+    GUI["🖥️ GuiServer + HttpServer<br/><sub>src/gui</sub>"]
+    STORE["🗂️ BackupStore<br/><sub>src/backup/BackupStore.cpp</sub>"]
     BM["🧭 BackupManager<br/><sub>src/backup/BackupManager.cpp</sub>"]
     IF{{"🔀 IBackupBackend"}}
     RB["🔧 RootBackend"]
@@ -13,7 +15,11 @@ flowchart TB
     ADB["🔌 AdbClient<br/><sub>src/adb</sub>"]
     PROC["⚙️ Process<br/><sub>src/util — fork/exec, no host shell involved</sub>"]
 
-    CLI --> BM --> IF
+    CLI --> BM
+    CLI --> GUI
+    GUI --> BM
+    GUI --> STORE
+    BM --> IF
     IF --> RB
     IF --> SB
     RB --> ADB
@@ -21,14 +27,44 @@ flowchart TB
     ADB --> PROC
 ```
 
-## 🖥️ Cli
+## ⌨️ Cli
 
 Parses `argv` into a subcommand and its options (hand-rolled, no argument
 parsing library — the option set is small and stable enough that a
 generic parser would add a dependency for little benefit). Prints
 usage/errors, asks for interactive confirmation before a backup/restore
 unless `-y`/`--yes` is given, and turns a `BackupSummary`/`RestoreSummary`
-into human-readable output.
+into human-readable output. `abp gui` is parsed here too, but hands off
+immediately to `GuiServer`.
+
+## 🖥️ GuiServer
+
+`abp gui` serves a single-page app (compiled into the binary from
+`src/gui/web/index.html`) plus the JSON API it drives, on top of
+`HttpServer` — a ~350-line HTTP/1.1 server that speaks just enough of the
+protocol for a local, single-origin app: one thread per connection, no
+keep-alive, no TLS.
+
+The API layer holds no backup logic of its own. It parses a request into
+the same `BackupOptions`/`RestoreOptions` the CLI builds, hands them to
+`BackupManager` on a worker thread, and streams progress back by
+installing a `Logger` sink that tees every log line into the running
+job's buffer. One job runs at a time, which is also why a process-global
+logger sink is enough.
+
+Requests are authenticated with a token generated at startup and
+validated on every `/api/...` call; see [GUI.md](GUI.md) for the rest of
+the security model.
+
+## 🗂️ BackupStore
+
+The read-only counterpart to `BackupManager`: it discovers backup
+directories under a root, summarizes their manifests, and lists files
+inside one. It never touches a device, which is what lets the GUI's
+"Explore backups" view work with nothing plugged in. Every browsing path
+is resolved through `resolveInside()`, which canonicalizes the path
+(following symlinks) and refuses anything that leaves the backup
+directory.
 
 ## 🧭 BackupManager
 

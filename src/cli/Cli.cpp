@@ -6,6 +6,7 @@
 #include "abp/AdbClient.h"
 #include "abp/BackupManager.h"
 #include "abp/BackupOptions.h"
+#include "abp/GuiServer.h"
 #include "abp/Json.h"
 #include "abp/Logger.h"
 #include "abp/StringUtil.h"
@@ -22,6 +23,7 @@ Usage:
   abp list-packages [-s SERIAL] [--system] [--json]
   abp backup -o DIR [options]
   abp restore -i DIR [options]
+  abp gui [options]
   abp --help
   abp --version
 
@@ -41,6 +43,14 @@ Backup options:
       --root              Require root; fail if unavailable.
       --standard          Force standard (non-root) mode even if root is available.
   -y, --yes               Do not prompt for confirmation.
+
+GUI options:
+      --port PORT         Port to listen on (default: 8787, 0 picks a free one).
+      --host ADDR         Address to bind (default: 127.0.0.1, loopback only).
+  -d, --backup-dir DIR    Folder the "Explore backups" view starts from
+                          (default: the current directory).
+      --scan-depth N      How many levels below that folder to search (default: 2).
+      --no-browser        Do not open a browser automatically.
 
 Restore options:
   -s, --serial SERIAL     Target a specific device.
@@ -275,6 +285,58 @@ int cmdRestore(const std::vector<std::string>& args) {
     return summary.packagesFailed > 0 ? 1 : 0;
 }
 
+int parseIntOption(const std::string& flag, const std::string& value) {
+    try {
+        size_t consumed = 0;
+        int parsed = std::stoi(value, &consumed);
+        if (consumed == value.size()) return parsed;
+    } catch (const std::exception&) {
+        // Fall through to the shared error below.
+    }
+    throw std::runtime_error(flag + " expects a number, got '" + value + "'");
+}
+
+int cmdGui(const std::vector<std::string>& args) {
+    GuiOptions options;
+
+    for (size_t i = 0; i < args.size(); ++i) {
+        const std::string& arg = args[i];
+        auto value = [&](const char* flag) -> std::string {
+            if (i + 1 >= args.size()) {
+                throw std::runtime_error(std::string(flag) + " requires a value");
+            }
+            return args[++i];
+        };
+
+        if (arg == "--port") options.port = parseIntOption(arg, value(arg.c_str()));
+        else if (arg == "--host") options.host = value(arg.c_str());
+        else if (arg == "-d" || arg == "--backup-dir") options.backupRoot = value(arg.c_str());
+        else if (arg == "--scan-depth") options.scanDepth = parseIntOption(arg, value(arg.c_str()));
+        else if (arg == "--no-browser") options.openBrowser = false;
+        else if (arg == "-v" || arg == "--verbose") Logger::setVerbose(true);
+        else {
+            Logger::error("Unknown gui option: " + arg);
+            return 2;
+        }
+    }
+
+    if (options.scanDepth < 0) {
+        Logger::error("--scan-depth cannot be negative.");
+        return 2;
+    }
+
+    if (const char* envToken = std::getenv("ABP_GUI_TOKEN")) options.token = envToken;
+
+    if (!AdbClient::isAdbAvailable()) {
+        // Not fatal: exploring existing backups needs no device at all, and
+        // adb may well appear before the user clicks "Back up".
+        Logger::warn("Could not run '" + AdbClient::adbPath() +
+                     "'. The GUI will start, but backing up and restoring needs adb on your PATH.");
+    }
+
+    return GuiServer::run(options);
+}
+
 } // namespace
 
 int Cli::run(int argc, char** argv) {
@@ -327,6 +389,7 @@ int Cli::run(int argc, char** argv) {
 
         if (command == "backup") return cmdBackup(rest);
         if (command == "restore") return cmdRestore(rest);
+        if (command == "gui") return cmdGui(rest);
 
         Logger::error("Unknown command: " + command);
         std::cout << kUsage;

@@ -4,6 +4,8 @@ add_executable(abp_tests
     test_json.cpp
     test_sha256.cpp
     test_manifest.cpp
+    test_backupstore.cpp
+    test_http.cpp
 )
 
 target_link_libraries(abp_tests PRIVATE abp_core)

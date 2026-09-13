@@ -1,12 +1,17 @@
 #include "abp/Logger.h"
 
 #include <cstdio>
+#include <mutex>
 #include <unistd.h>
+#include <utility>
 
 namespace abp {
 namespace {
 bool g_verbose = false;
 bool g_colorEnabled = isatty(fileno(stderr)) != 0;
+
+std::mutex g_mutex;
+Logger::Sink g_sink;
 
 const char* levelColor(LogLevel level) {
     switch (level) {
@@ -32,10 +37,18 @@ const char* levelLabel(LogLevel level) {
 void Logger::setVerbose(bool verbose) { g_verbose = verbose; }
 void Logger::setColorEnabled(bool enabled) { g_colorEnabled = enabled; }
 
+void Logger::setSink(Sink sink) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    g_sink = std::move(sink);
+}
+
 void Logger::log(LogLevel level, const std::string& message) {
     if (level == LogLevel::Debug && !g_verbose) {
         return;
     }
+
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (g_sink) g_sink(level, message);
 
     FILE* stream = (level == LogLevel::Warn || level == LogLevel::Error) ? stderr : stdout;
     const bool prefixed = level != LogLevel::Info;

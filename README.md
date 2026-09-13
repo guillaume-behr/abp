@@ -29,6 +29,7 @@ root-mode backups, root access on the device).
 
 ```mermaid
 flowchart LR
+    G["🖥️ abp gui<br/><sub>local web app</sub>"] --> A
     D[📱 Android device] <-- adb --> A{{⚙️ abp}}
     A -->|root available| R["🔧 Root backend<br/>tar streamed over adb exec-out/shell"]
     A -->|no root| S["📦 Standard backend<br/>adb backup/restore + pull/push"]
@@ -65,6 +66,7 @@ files. `abp` gives you a single tool that:
 | ♻️ **Full restore** | Reinstalls APKs, restores app data with UID remapping + SELinux relabeling, restores shared storage. |
 | 🔧 **Root backend** | Streams `tar` archives of each app's data directory (and of `/sdcard`) over `adb exec-out`/`shell` — never buffers large data in host memory. |
 | 📦 **Standard backend** | Public `adb backup`/`restore` + `adb pull`/`push` — no root required, works on any USB-debuggable device. |
+| 🖥️ **Web GUI** | `abp gui` — a local, dependency-free web app for backing up, restoring and exploring backups. |
 | 🎯 **Selective ops** | `--only`, `--exclude`, `--no-apks`, `--no-data`, `--no-shared`, `--system`. |
 | ✅ **Integrity checking** | Every archive is SHA-256 checksummed at backup time and verified before it's written back to the device. |
 | 🔒 **No shell-injection surface** | Every device command is built from validated package names/paths — never raw string concatenation of untrusted input. |
@@ -151,6 +153,8 @@ abp list-packages [-s SERIAL] [--system]     # installed packages
 
 abp backup  -o ./my-backup [options]         # back up
 abp restore -i ./my-backup [options]         # restore
+
+abp gui [--port 8787] [--no-browser]         # web GUI for all of the above
 ```
 
 ### 💾 Backing up
@@ -185,6 +189,31 @@ automatically — you don't need to specify it again. Restoring into a
 non-rooted device from a root-mode backup will still reinstall APKs, but
 app data and shared storage cannot be restored without root.
 
+### 🖥️ The web GUI
+
+```sh
+abp gui
+```
+
+Starts a local web app on `127.0.0.1:8787` and opens it in your browser.
+It does everything the CLI does — pick a device, choose what to capture,
+watch the backup's log stream past live — plus one thing the CLI can't:
+**browsing backups you already have**, with per-package archive sizes,
+checksums, errors, and a file browser over the backup directory.
+
+```text
+Devices          → what adb can see, with model, Android version, root status
+Back up          → destination, what to capture, backend, package picker
+Restore          → load a backup's manifest, tick packages, restore
+Explore backups  → scan a folder, inspect any backup without a device
+```
+
+The page is compiled into the binary (no assets to install, nothing
+fetched from the network), the server binds loopback only, and every API
+call needs the random token `abp` prints in the URL. See
+[docs/GUI.md](docs/GUI.md) for the options, the security model, and the
+JSON API the page is built on.
+
 Run `abp --help`, or see [docs/USAGE.md](docs/USAGE.md), for the full
 option reference and more examples.
 
@@ -211,6 +240,7 @@ anything you cannot afford to lose:
 | Doc | What's in it |
 |---|---|
 | [docs/USAGE.md](docs/USAGE.md) | Full command/option reference, examples, troubleshooting. |
+| [docs/GUI.md](docs/GUI.md) | The `abp gui` web app: options, security model, JSON API. |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | How the code is layered. |
 | [docs/ROOT_BACKUP.md](docs/ROOT_BACKUP.md) | Exactly what root mode does on-device. |
 | [docs/MANIFEST.md](docs/MANIFEST.md) | Backup directory layout and `manifest.json` schema. |

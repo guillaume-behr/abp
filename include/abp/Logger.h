@@ -1,5 +1,6 @@
 #pragma once
 
+#include <functional>
 #include <string>
 
 namespace abp {
@@ -7,11 +8,21 @@ namespace abp {
 enum class LogLevel { Debug, Info, Warn, Error };
 
 /// Minimal process-wide logger. Info goes to stdout, Warn/Error to stderr.
-/// Not thread-safe by design: abp runs its work on a single thread.
+/// A sink may additionally be installed to tee every emitted message
+/// somewhere else (the web GUI uses one to stream a running job's progress
+/// to the browser); sink installation and dispatch are mutex-guarded so a
+/// background worker thread can log while the main thread reads.
 class Logger {
 public:
+    /// Receives every message that passes the verbosity filter, in addition
+    /// to the normal stdout/stderr output.
+    using Sink = std::function<void(LogLevel, const std::string&)>;
+
     static void setVerbose(bool verbose);
     static void setColorEnabled(bool enabled);
+
+    /// Installs (or, with an empty function, removes) the message sink.
+    static void setSink(Sink sink);
 
     static void debug(const std::string& message);
     static void info(const std::string& message);

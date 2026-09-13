@@ -62,6 +62,25 @@ std::vector<char*> buildArgv(const std::vector<std::string>& args) {
     return argv;
 }
 
+/// Creates a pipe whose ends are close-on-exec. abp now forks from more
+/// than one thread (the GUI serves requests while a backup runs), and
+/// without this a fork happening concurrently on another thread would
+/// inherit this pipe -- holding its write end open and stalling the
+/// unrelated reader until that second child also exited.
+///
+/// dup2() clears the flag on the descriptors the child installs as
+/// stdin/stdout/stderr, so those still survive the exec.
+bool makeCloexecPipe(int fds[2]) {
+#if defined(__linux__)
+    return pipe2(fds, O_CLOEXEC) == 0;
+#else
+    if (pipe(fds) != 0) return false;
+    fcntl(fds[0], F_SETFD, FD_CLOEXEC);
+    fcntl(fds[1], F_SETFD, FD_CLOEXEC);
+    return true;
+#endif
+}
+
 void setNonBlocking(int fd) {
     int flags = fcntl(fd, F_GETFL, 0);
     if (flags != -1) {
@@ -163,11 +182,11 @@ ProcessResult Process::run(const std::vector<std::string>& args, const std::stri
     int outPipe[2] = {-1, -1};
     int errPipe[2] = {-1, -1};
 
-    if (stdinData != nullptr && pipe(inPipe) != 0) {
+    if (stdinData != nullptr && !makeCloexecPipe(inPipe)) {
         result.spawnFailed = true;
         return result;
     }
-    if (pipe(outPipe) != 0 || pipe(errPipe) != 0) {
+    if (!makeCloexecPipe(outPipe) || !makeCloexecPipe(errPipe)) {
         result.spawnFailed = true;
         return result;
     }
@@ -221,7 +240,7 @@ ProcessResult Process::runToFile(const std::vector<std::string>& args, const std
         return result;
     }
 
-    Fd outFile(open(outputPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644));
+    Fd outFile(open(outputPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644));
     if (!outFile.valid()) {
         result.spawnFailed = true;
         result.stdErr = std::string("failed to open output file: ") + std::strerror(errno);
@@ -229,7 +248,7 @@ ProcessResult Process::runToFile(const std::vector<std::string>& args, const std
     }
 
     int errPipe[2];
-    if (pipe(errPipe) != 0) {
+    if (!makeCloexecPipe(errPipe)) {
         result.spawnFailed = true;
         return result;
     }
@@ -269,7 +288,7 @@ ProcessResult Process::runFromFile(const std::vector<std::string>& args, const s
         return result;
     }
 
-    Fd inFile(open(inputPath.c_str(), O_RDONLY));
+    Fd inFile(open(inputPath.c_str(), O_RDONLY | O_CLOEXEC));
     if (!inFile.valid()) {
         result.spawnFailed = true;
         result.stdErr = std::string("failed to open input file: ") + std::strerror(errno);
@@ -278,7 +297,7 @@ ProcessResult Process::runFromFile(const std::vector<std::string>& args, const s
 
     int outPipe[2];
     int errPipe[2];
-    if (pipe(outPipe) != 0 || pipe(errPipe) != 0) {
+    if (!makeCloexecPipe(outPipe) || !makeCloexecPipe(errPipe)) {
         result.spawnFailed = true;
         return result;
     }

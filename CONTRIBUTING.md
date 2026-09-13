@@ -40,7 +40,8 @@ otherwise fail.
 include/abp/   Public headers (one class/concept per header)
 src/util/      Dependency-free utilities: Process, Json, Sha256, StringUtil, FsUtil, Logger
 src/adb/       AdbClient: the only place that shells out to `adb`
-src/backup/    Manifest, IBackupBackend, RootBackend, StandardBackend, BackupManager
+src/backup/    Manifest, IBackupBackend, RootBackend, StandardBackend, BackupManager, BackupStore
+src/gui/       HttpServer, GuiServer, and web/index.html (embedded into the binary at build time)
 src/cli/       Argument parsing and command dispatch
 tests/         Unit tests (self-contained test runner, no external framework)
 docs/          Design docs: architecture, root-mode internals, manifest schema
@@ -52,8 +53,13 @@ together.
 ## Testing
 
 `ABP_BUILD_TESTS` (default `ON`) builds `abp_tests`, covering the
-pure-logic pieces (`Json`, `Sha256`, `StringUtil`, `Manifest`). Please add
-test coverage for any new pure-logic code.
+pure-logic pieces (`Json`, `Sha256`, `StringUtil`, `Manifest`,
+`BackupStore`, and the HTTP request helpers). Please add test coverage
+for any new pure-logic code.
+
+The GUI's page lives at `src/gui/web/index.html` and is turned into a C++
+string literal by `cmake/EmbedWebUi.cmake` during the build — edit the
+HTML file, not the generated source, and rebuild to see changes.
 
 Because `AdbClient`, `RootBackend`, and `StandardBackend` need a real (or
 simulated) device, they aren't covered by the unit test binary. When

@@ -3,6 +3,21 @@
 All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- `abp gui`: a local web GUI, served from the `abp` binary itself, for
+  backing up and restoring devices and for exploring backups already on
+  disk (manifest details, per-package archive sizes/checksums/errors, and
+  a file browser over the backup directory).
+- JSON API behind the GUI (`/api/devices`, `/api/backups`,
+  `/api/jobs/backup`, `/api/job`, ...), usable on its own for scripting.
+- `BackupStore`: read-only discovery, summarizing and sandboxed browsing
+  of backup directories.
+- `Logger` sink hook, used to stream a running job's progress to the
+  browser while still printing it to the terminal.
+
 ## [1.0.0] - 2026-09-10
 
 ### Added
