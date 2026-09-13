@@ -81,7 +81,9 @@ public:
 
 private:
     std::atomic<int> listenFd_{-1};
-    int boundPort_ = 0;
+    /// Written by listen() and read by whoever prints the URL, which on the
+    /// GUI's path is a different thread.
+    std::atomic<int> boundPort_{0};
     std::atomic<bool> stopping_{false};
 };
 

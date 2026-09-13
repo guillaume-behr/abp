@@ -1,19 +1,19 @@
-# 🏗️ Architecture
+# Architecture
 
 `abp` is organized in layers, each of which only talks to the layer
 directly below it:
 
 ```mermaid
 flowchart TB
-    CLI["⌨️ Cli<br/><sub>src/cli</sub>"]
-    GUI["🖥️ GuiServer + HttpServer<br/><sub>src/gui</sub>"]
-    STORE["🗂️ BackupStore<br/><sub>src/backup/BackupStore.cpp</sub>"]
-    BM["🧭 BackupManager<br/><sub>src/backup/BackupManager.cpp</sub>"]
-    IF{{"🔀 IBackupBackend"}}
-    RB["🔧 RootBackend"]
-    SB["📦 StandardBackend"]
-    ADB["🔌 AdbClient<br/><sub>src/adb</sub>"]
-    PROC["⚙️ Process<br/><sub>src/util — fork/exec, no host shell involved</sub>"]
+    CLI["Cli<br/><sub>src/cli</sub>"]
+    GUI["GuiServer + HttpServer<br/><sub>src/gui</sub>"]
+    STORE["BackupStore<br/><sub>src/backup/BackupStore.cpp</sub>"]
+    BM["BackupManager<br/><sub>src/backup/BackupManager.cpp</sub>"]
+    IF{{"IBackupBackend"}}
+    RB["RootBackend"]
+    SB["StandardBackend"]
+    ADB["AdbClient<br/><sub>src/adb</sub>"]
+    PROC["Process<br/><sub>src/util — fork/exec, no host shell involved</sub>"]
 
     CLI --> BM
     CLI --> GUI
@@ -27,7 +27,7 @@ flowchart TB
     ADB --> PROC
 ```
 
-## ⌨️ Cli
+## Cli
 
 Parses `argv` into a subcommand and its options (hand-rolled, no argument
 parsing library — the option set is small and stable enough that a
@@ -37,7 +37,7 @@ unless `-y`/`--yes` is given, and turns a `BackupSummary`/`RestoreSummary`
 into human-readable output. `abp gui` is parsed here too, but hands off
 immediately to `GuiServer`.
 
-## 🖥️ GuiServer
+## GuiServer
 
 `abp gui` serves a single-page app (compiled into the binary from
 `src/gui/web/index.html`) plus the JSON API it drives, on top of
@@ -56,7 +56,7 @@ Requests are authenticated with a token generated at startup and
 validated on every `/api/...` call; see [GUI.md](GUI.md) for the rest of
 the security model.
 
-## 🗂️ BackupStore
+## BackupStore
 
 The read-only counterpart to `BackupManager`: it discovers backup
 directories under a root, summarizes their manifests, and lists files
@@ -66,7 +66,7 @@ is resolved through `resolveInside()`, which canonicalizes the path
 (following symlinks) and refuses anything that leaves the backup
 directory.
 
-## 🧭 BackupManager
+## BackupManager
 
 The only place that knows the end-to-end backup/restore *workflow*:
 connect, detect the device and root access, pick a backend, enumerate and
@@ -78,7 +78,7 @@ chosen backend, and read/write `manifest.json`.
 `AdbClient`, and never contains backend-specific commands — that's the
 backend's job.
 
-## 🔀 IBackupBackend
+## IBackupBackend
 
 A small strategy interface (`backupAppData`, `restoreAppData`,
 `backupSharedStorage`, `restoreSharedStorage`) implemented by:
@@ -101,7 +101,7 @@ serialized to `manifest.json`. Keeping backends manifest-aware (rather
 than returning some backend-specific result type) means `BackupManager`
 doesn't need to know anything about *how* a backend records what it did.
 
-## 🔌 AdbClient
+## AdbClient
 
 Thin, typed wrapper over the `adb` command-line tool: `shell`,
 `push`/`pull`, `installApks`, `execOutToFile` (stream a device command's
@@ -121,13 +121,15 @@ hundred apps.
 `AdbClient::shell()` takes a single, already-quoted command string (see
 `StringUtil::shellQuote`), rather than an argv array, because that's what
 adb itself expects: everything after `adb shell` is forwarded verbatim
-to the device's shell. Every value interpolated into that string
-(package names, paths) is validated first — see
-`StringUtil::isValidPackageName` and the package-name checks in
-`RootBackend`/`BackupManager` — so untrusted device output can't smuggle
-shell metacharacters into a command abp constructs.
+to the device's shell. Every value interpolated into that string —
+package names, device paths, the UID/GID a restore chowns to — goes
+through two independent defences: it is validated (see
+`StringUtil::isValidPackageName` and `DevicePaths::classify`) *and* it is
+wrapped in `shellQuote()` at the point of use. Either one alone would
+do; both together mean a future caller that forgets the validator still
+cannot smuggle shell metacharacters into a command abp constructs.
 
-## ⚙️ Process
+## Process
 
 A dependency-free `fork`/`exec` wrapper (`src/util/Process.cpp`). No
 command ever goes through `/bin/sh` on the *host* side — `adb` is always
@@ -140,12 +142,33 @@ invoked with an explicit argv array. Three modes:
   through this process's heap.
 - `runFromFile()` — the mirror image, for pushing an archive back in via
   a command's stdin.
+- `runInheritStdio()` — no redirection at all, so adb's own progress
+  display reaches the terminal during a multi-minute `adb pull`.
 
-## 🧰 Util
+Two details matter because `abp gui` forks from a worker thread while
+other threads are serving HTTP:
+
+- **Everything the child needs is built before the `fork()`.** The only
+  async-signal-safe thing a forked child of a multi-threaded process may
+  do is `exec`; a child that allocated could block forever on a malloc
+  lock another thread happened to hold at the instant of the fork. The
+  argv array is therefore assembled in the parent, and the child does
+  nothing but `dup2`/`close` and `execvp`.
+- **Every pipe is created close-on-exec.** Without that, a fork happening
+  concurrently on another thread would inherit an unrelated pipe, hold
+  its write end open, and stall that pipe's reader until the second child
+  also exited. `dup2()` clears the flag on whatever the child installs as
+  its standard streams, so those still survive the exec.
+
+## Util
 
 `Json` (a small, order-preserving JSON value/parser/serializer),
 `Sha256` (FIPS 180-4, used only for backup integrity checking, not for
-anything security-sensitive), `StringUtil`, `FsUtil`, and `Logger`. None
+anything security-sensitive), `StringUtil`, `FsUtil`, and `Logger`.
+`Logger` is process-global and takes an optional sink, which is how the
+GUI tees a running job's output into the browser; the sink is copied out
+and invoked with the logger's own mutex released, so a sink that takes
+another lock cannot invert the lock order. None
 of these have any dependency on the rest of the codebase, and none of
 them know what a "backup" is — that keeps them easy to unit-test in
 isolation (see `tests/`).

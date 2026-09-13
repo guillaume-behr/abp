@@ -248,3 +248,49 @@ ABP_TEST(standard_restore_reports_a_missing_run_as_archive) {
 
     ABP_CHECK(findPackageEntry(manifest, "com.example.debuggable")->error.find("missing") != std::string::npos);
 }
+
+ABP_TEST(standard_restore_pushes_shared_storage_into_the_sdcard_root) {
+    StandardFixture fixture(R"SH(
+LOG="$(dirname "$0")/calls.log"
+echo "$*" >> "$LOG"
+exit 0
+)SH");
+
+    Manifest manifest;
+    manifest.mode = "standard";
+    manifest.sharedStorageIncluded = true;
+    manifest.sharedStorageIsDirectory = true;
+    manifest.sharedStorageArchive = "shared_storage";
+
+    fs::create_directories(fixture.backupDir() / "shared_storage" / "DCIM");
+    std::ofstream(fixture.backupDir() / "shared_storage" / "DCIM" / "a.jpg") << "photo";
+
+    StandardBackend backend;
+    ABP_CHECK(backend.restoreSharedStorage(AdbClient("SERIAL"), fixture.backupDir(), manifest));
+
+    // The destination must be the parent directory. `adb push` copies a
+    // source *into* a destination that already exists as a directory, so
+    // naming "/sdcard/DCIM" would land the photos in /sdcard/DCIM/DCIM on
+    // every device that already has a DCIM folder -- which is all of them.
+    const std::string log = fixture.readLog();
+    ABP_CHECK(log.find("DCIM /sdcard\n") != std::string::npos);
+    ABP_CHECK(log.find("/sdcard/DCIM") == std::string::npos);
+}
+
+ABP_TEST(standard_restore_explains_a_root_mode_shared_storage_archive) {
+    StandardFixture fixture("exit 0\n");
+
+    // A root-mode backup: shared storage is a single tar file, not a tree.
+    Manifest manifest;
+    manifest.mode = "root";
+    manifest.sharedStorageIncluded = true;
+    manifest.sharedStorageIsDirectory = false;
+    manifest.sharedStorageArchive = "shared_storage.tar";
+    std::ofstream(fixture.backupDir() / "shared_storage.tar") << "tar";
+
+    StandardBackend backend;
+    ABP_CHECK(!backend.restoreSharedStorage(AdbClient("SERIAL"), fixture.backupDir(), manifest));
+    // Nothing may be pushed, and in particular the archive must not be
+    // mistaken for a directory tree.
+    ABP_CHECK(fixture.readLog().find("push") == std::string::npos);
+}

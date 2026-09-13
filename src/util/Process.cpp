@@ -138,6 +138,13 @@ void redirect(Fd& source, int target) {
     source.close();
 }
 
+/// Builds the argv array exec() needs. This MUST be called before fork(),
+/// never in the child: it allocates, and the only async-signal-safe thing a
+/// forked child of a multi-threaded process may do is exec. abp forks from
+/// more than one thread (the GUI serves requests while a backup runs), so a
+/// child that allocated could deadlock forever on a malloc lock another
+/// thread happened to hold at the moment of the fork. The strings it points
+/// into belong to the caller's `args` and survive the fork unchanged.
 std::vector<char*> buildArgv(const std::vector<std::string>& args) {
     std::vector<char*> argv;
     argv.reserve(args.size() + 1);
@@ -300,6 +307,8 @@ ProcessResult Process::run(const std::vector<std::string>& args, const std::stri
         return result;
     }
 
+    auto argv = buildArgv(args);
+
     pid_t pid = fork();
     if (pid < 0) {
         result.spawnFailed = true;
@@ -317,7 +326,6 @@ ProcessResult Process::run(const std::vector<std::string>& args, const std::stri
         redirect(outPipe.write(), STDOUT_FILENO);
         redirect(errPipe.write(), STDERR_FILENO);
 
-        auto argv = buildArgv(args);
         execvp(argv[0], argv.data());
         _exit(127);
     }
@@ -354,6 +362,8 @@ ProcessResult Process::runToFile(const std::vector<std::string>& args, const std
         return result;
     }
 
+    auto argv = buildArgv(args);
+
     pid_t pid = fork();
     if (pid < 0) {
         result.spawnFailed = true;
@@ -365,7 +375,6 @@ ProcessResult Process::runToFile(const std::vector<std::string>& args, const std
         redirect(outFile, STDOUT_FILENO);
         redirect(errPipe.write(), STDERR_FILENO);
 
-        auto argv = buildArgv(args);
         execvp(argv[0], argv.data());
         _exit(127);
     }
@@ -393,6 +402,8 @@ ProcessResult Process::runInheritStdio(const std::vector<std::string>& args) {
     // surface after output the child produced later.
     std::fflush(nullptr);
 
+    auto argv = buildArgv(args);
+
     pid_t pid = fork();
     if (pid < 0) {
         result.spawnFailed = true;
@@ -401,7 +412,6 @@ ProcessResult Process::runInheritStdio(const std::vector<std::string>& args) {
 
     if (pid == 0) {
         // No redirection at all: the child inherits stdin/stdout/stderr.
-        auto argv = buildArgv(args);
         execvp(argv[0], argv.data());
         _exit(127);
     }
@@ -432,6 +442,8 @@ ProcessResult Process::runFromFile(const std::vector<std::string>& args, const s
         return result;
     }
 
+    auto argv = buildArgv(args);
+
     pid_t pid = fork();
     if (pid < 0) {
         result.spawnFailed = true;
@@ -445,7 +457,6 @@ ProcessResult Process::runFromFile(const std::vector<std::string>& args, const s
         redirect(outPipe.write(), STDOUT_FILENO);
         redirect(errPipe.write(), STDERR_FILENO);
 
-        auto argv = buildArgv(args);
         execvp(argv[0], argv.data());
         _exit(127);
     }

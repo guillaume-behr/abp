@@ -1,4 +1,4 @@
-# 🧾 Backup directory layout and manifest schema
+# Backup directory layout and manifest schema
 
 A backup produced by `abp backup -o DIR` looks like:
 
@@ -116,6 +116,12 @@ Notes:
 - `external_data_included`/`external_data_archive*` fields are reserved
   for a future capture of `/sdcard/Android/data/<pkg>` (per-app external
   storage); they are always empty/false today.
+- A capture's `local_path` is derived from its device path with the
+  slashes replaced (`/data/app` becomes `filesystem/data_app`). That
+  mapping is many-to-one, so when two captured paths would reduce to the
+  same name the later one gets a numbered suffix (`data_app_2`). Always
+  read `local_path` from the manifest rather than recomputing it from
+  `device_path`.
 - `filesystem_captures` records raw `adb pull` copies of whole device
   paths. `complete: false` means `adb pull` reported errors — almost
   always permission denied on part of the tree, which is the normal

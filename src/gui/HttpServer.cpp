@@ -8,6 +8,7 @@
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <sys/types.h>
+#include <system_error>
 #include <thread>
 #include <unistd.h>
 #include <utility>
@@ -47,8 +48,16 @@ const char* statusText(int status) {
         case 409: return "Conflict";
         case 413: return "Payload Too Large";
         case 500: return "Internal Server Error";
-        default: return "OK";
+        case 503: return "Service Unavailable";
+        default: break;
     }
+    // A reason phrase is advisory, but calling an unlisted status "OK" would
+    // put "503 OK" on the wire. Fall back to the class instead.
+    if (status >= 500) return "Server Error";
+    if (status >= 400) return "Client Error";
+    if (status >= 300) return "Redirection";
+    if (status >= 200) return "Success";
+    return "Informational";
 }
 
 bool writeAll(int fd, const char* data, size_t size) {
@@ -77,14 +86,16 @@ bool readRequest(int fd, Request* request, int* errorStatus) {
     while (true) {
         headerEnd = buffer.find("\r\n\r\n");
         if (headerEnd != std::string::npos) break;
-        if (buffer.size() > kMaxHeaderBytes) {
-            *errorStatus = 413;
-            return false;
-        }
         ssize_t n = ::read(fd, chunk, sizeof(chunk));
         if (n < 0 && errno == EINTR) continue;
         if (n <= 0) return false;
         buffer.append(chunk, static_cast<size_t>(n));
+        // Checked after appending, not before: checking first would let the
+        // buffer reach the cap *plus* one whole read before anyone noticed.
+        if (buffer.size() > kMaxHeaderBytes) {
+            *errorStatus = 413;
+            return false;
+        }
     }
 
     std::string head = buffer.substr(0, headerEnd);
@@ -322,7 +333,7 @@ void HttpServer::serveForever(Handler handler) {
             continue;
         }
 
-        std::thread([client, handler]() {
+        auto serve = [client, handler]() {
             setSocketTimeout(client);
             Request request;
             int errorStatus = 0;
@@ -340,7 +351,19 @@ void HttpServer::serveForever(Handler handler) {
             }
             ::shutdown(client, SHUT_WR);
             ::close(client);
-        }).detach();
+        };
+
+        // std::thread's constructor throws when the process is out of threads
+        // (a browser opening connections faster than they retire, or an
+        // exhausted rlimit). Letting that escape would tear down the server
+        // and leak this connection, so the request is answered on this thread
+        // instead: slower, but the GUI stays up and the socket still closes.
+        try {
+            std::thread(serve).detach();
+        } catch (const std::system_error& e) {
+            Logger::debug(std::string("Could not start a request thread, serving inline: ") + e.what());
+            serve();
+        }
     }
 }
 

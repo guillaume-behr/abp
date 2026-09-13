@@ -336,6 +336,10 @@ int cmdRestore(const std::vector<std::string>& args) {
     std::cout << "\nRestore complete.\n";
     std::cout << "  Packages restored: " << summary.packagesRestored << "\n";
     std::cout << "  Packages failed:   " << summary.packagesFailed << "\n";
+    if (summary.packagesSkipped > 0) {
+        std::cout << "  Nothing to restore: " << summary.packagesSkipped
+                   << " (no APK and no data in the backup)\n";
+    }
     std::cout << "  Shared storage:    " << (summary.sharedStorageRestored ? "restored" : "skipped") << "\n";
     if (summary.filesystemCapturesPresent > 0) {
         std::cout << "  Device paths:      " << summary.filesystemCapturesPresent
@@ -457,8 +461,12 @@ int Cli::run(int argc, char** argv) {
             return cmdDevices();
         }
 
+        // Only the two read-only commands below take their serial this way;
+        // backup/restore/gui parse their own arguments, and scanning theirs
+        // here would answer an unknown flag with the wrong complaint.
+        const bool takesSerial = command == "info" || command == "list-packages";
         std::string serial;
-        for (size_t i = 0; i < rest.size(); ++i) {
+        for (size_t i = 0; takesSerial && i < rest.size(); ++i) {
             if (rest[i] != "-s" && rest[i] != "--serial") continue;
             if (i + 1 >= rest.size()) {
                 Logger::error(rest[i] + " requires a value");

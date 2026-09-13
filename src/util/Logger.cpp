@@ -1,5 +1,6 @@
 #include "abp/Logger.h"
 
+#include <atomic>
 #include <cstdio>
 #include <mutex>
 #include <unistd.h>
@@ -7,7 +8,7 @@
 
 namespace abp {
 namespace {
-bool g_verbose = false;
+std::atomic<bool> g_verbose{false};
 
 /// Tri-state: unset means "decide per stream from isatty", which keeps escape
 /// codes out of a redirected stdout even while stderr is still a terminal.
@@ -62,9 +63,19 @@ void Logger::log(LogLevel level, const std::string& message) {
         return;
     }
 
-    std::lock_guard<std::mutex> lock(g_mutex);
-    if (g_sink) g_sink(level, message);
+    // The sink is copied out and called with the lock released. Holding it
+    // across the call would make the lock order "logger then whatever the
+    // sink locks", and the GUI's sink takes the job runner's mutex -- one
+    // logging call from inside that mutex would then deadlock. Copying also
+    // keeps the target alive for the duration even if setSink() runs now.
+    Sink sink;
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        sink = g_sink;
+    }
+    if (sink) sink(level, message);
 
+    std::lock_guard<std::mutex> lock(g_mutex);
     FILE* stream = (level == LogLevel::Warn || level == LogLevel::Error) ? stderr : stdout;
     const bool prefixed = level != LogLevel::Info;
 

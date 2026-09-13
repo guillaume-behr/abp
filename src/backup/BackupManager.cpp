@@ -73,10 +73,20 @@ void extractApks(const AdbClient& adb, const fs::path& outDir, const std::vector
         fsutil::ensureDirectory(pkgDir);
 
         std::vector<std::string> localFiles;
+        std::vector<std::string> usedNames;
         bool anyFailed = false;
         for (size_t i = 0; i < pkg.apkPaths.size(); ++i) {
-            std::string base = fs::path(pkg.apkPaths[i]).filename().string();
-            if (base.empty()) base = "split_" + std::to_string(i) + ".apk";
+            std::string base = fsutil::sanitizeForFilename(fs::path(pkg.apkPaths[i]).filename().string());
+            if (base.empty() || base == "_") base = "split_" + std::to_string(i) + ".apk";
+
+            // Split APKs of one package can share a basename when they live in
+            // different on-device directories. Pulling both to the same local
+            // name would overwrite the first and list the same file twice in
+            // the manifest, which install-multiple then rejects.
+            if (std::find(usedNames.begin(), usedNames.end(), base) != usedNames.end()) {
+                base = "split_" + std::to_string(i) + "_" + base;
+            }
+            usedNames.push_back(base);
 
             fs::path localPath = pkgDir / base;
             if (!adb.pull(pkg.apkPaths[i], localPath.string())) {
@@ -127,6 +137,20 @@ void captureFilesystem(const AdbClient& adb, const fs::path& outDir, const std::
     std::vector<std::string> paths = devicepaths::collapseRedundant(requestedPaths);
     if (paths.empty()) return;
 
+    // sanitizeForFilename() is many-to-one: "/data/app" and "/data_app" both
+    // reduce to "data_app". Two such paths would otherwise write to the same
+    // directory, and since each capture wipes its destination first, the
+    // second would silently replace the first while the manifest claimed both.
+    std::vector<std::string> usedNames;
+    auto uniqueName = [&usedNames](std::string candidate) {
+        std::string name = candidate;
+        for (int suffix = 2; std::find(usedNames.begin(), usedNames.end(), name) != usedNames.end(); ++suffix) {
+            name = candidate + "_" + std::to_string(suffix);
+        }
+        usedNames.push_back(name);
+        return name;
+    };
+
     const fs::path fsDir = outDir / "filesystem";
     if (!fsutil::ensureDirectory(fsDir)) {
         Logger::error("Could not create " + fsDir.string() + "; skipping the filesystem capture.");
@@ -157,8 +181,8 @@ void captureFilesystem(const AdbClient& adb, const fs::path& outDir, const std::
 
         // One directory per captured root, named after the path so the
         // backup is navigable: "/data/app" becomes "filesystem/data_app".
-        std::string localName = fsutil::sanitizeForFilename(
-            devicePath.substr(1).empty() ? std::string("root") : devicePath.substr(1));
+        const std::string localName = uniqueName(fsutil::sanitizeForFilename(
+            devicePath.substr(1).empty() ? std::string("root") : devicePath.substr(1)));
         const fs::path localPath = fsDir / localName;
 
         std::error_code ec;
@@ -367,7 +391,8 @@ RestoreSummary BackupManager::runRestore(const RestoreOptions& options) {
     }
 
     fs::path manifestPath = options.inputDir / "manifest.json";
-    if (!fs::exists(manifestPath)) {
+    std::error_code manifestEc;
+    if (!fs::is_regular_file(manifestPath, manifestEc)) {
         summary.messages.push_back("No manifest.json found in " + options.inputDir.string() +
                                     " -- is this an abp backup directory?");
         return summary;
@@ -457,10 +482,26 @@ RestoreSummary BackupManager::runRestore(const RestoreOptions& options) {
                       "is not safe to automate. Copy what you need from them by hand.");
     }
 
+    // "Restored" means something was actually written back for the package.
+    // Counting every selected entry would report a package the backup holds
+    // nothing for -- no APK, no data -- as a successful restore, which is the
+    // one thing the summary must not get wrong.
+    const bool appDataAttempted = options.includeAppData && !(needsRoot && !device.isRooted());
     for (const auto& entry : manifest.packages) {
         if (!contains(selectedNames, entry.name)) continue;
-        if (!entry.error.empty()) ++summary.packagesFailed;
-        else ++summary.packagesRestored;
+        if (!entry.error.empty()) {
+            ++summary.packagesFailed;
+            continue;
+        }
+        const bool apkRestored = options.includeApks && entry.apkIncluded && !entry.apkFiles.empty();
+        const bool dataRestored = appDataAttempted && entry.dataIncluded;
+        if (apkRestored || dataRestored) ++summary.packagesRestored;
+        else ++summary.packagesSkipped;
+    }
+
+    if (summary.packagesSkipped > 0) {
+        Logger::warn(std::to_string(summary.packagesSkipped) +
+                      " selected package(s) had nothing to restore in this backup (no APK and no captured data).");
     }
 
     summary.success = true;

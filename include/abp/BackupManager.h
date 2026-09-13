@@ -37,6 +37,10 @@ struct RestoreSummary {
     bool success = false;
     int packagesRestored = 0;
     int packagesFailed = 0;
+    /// Selected, but the backup held nothing to write back for them -- no
+    /// APK and no captured data. Counting these as restored would overstate
+    /// what the run achieved.
+    int packagesSkipped = 0;
     bool sharedStorageRestored = false;
 
     /// Raw device-path captures found in the backup. abp reports these but

@@ -280,7 +280,7 @@ std::vector<std::string> AdbClient::packageApkPaths(const std::string& packageNa
     }
 
     bool ok = false;
-    std::string output = shellText("pm path " + packageName, &ok);
+    std::string output = shellText("pm path " + strutil::shellQuote(packageName), &ok);
     if (!ok) return paths;
 
     for (const auto& rawLine : strutil::split(output, '\n')) {

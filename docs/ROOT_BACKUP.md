@@ -1,4 +1,4 @@
-# 🔧 Root-mode backup and restore
+# Root-mode backup and restore
 
 This document describes exactly what `abp` does on-device in root mode
 (`RootBackend`), so you know what to expect and can debug it yourself if
@@ -33,13 +33,18 @@ it captures debuggable apps completely, via `run-as`. See
 For each package, `abp` runs (conceptually):
 
 ```sh
-[ -d /data/data/<pkg> ] && echo yes || echo no      # skip if no data dir
-tar -czf - -C /data/data <pkg> 2>/dev/null           # streamed via `adb exec-out`
+[ -d '/data/data/<pkg>' ] && echo yes || echo no   # skip if no data dir
+tar -czf - -C /data/data '<pkg>' 2>/dev/null       # streamed via `adb exec-out`
 ```
 
 directly to a local `data/<pkg>.tar.gz`, streamed via `adb exec-out` so
 the archive never passes through `abp`'s own memory. The result is
 SHA-256 checksummed and recorded in `manifest.json`.
+
+The single quotes above are real, not editorial: every value abp
+interpolates into a device command is shell-quoted at the point of use as
+well as validated beforehand. Under `su`, the whole command is quoted a
+second time as the argument to `su -c`.
 
 Apps with no data directory yet (freshly installed, never opened) are
 recorded with `data_included: false` and no error — that's expected, not
@@ -75,7 +80,7 @@ then be unable to read its own data.
    directory is replaced underneath it. A live process would otherwise
    see a half-old, half-new view of its files and could write over the
    restored data from its in-memory state.
-4. Recording that current ownership: `stat -c '%u:%g' /data/data/<pkg>`.
+4. Recording that current ownership: `stat -c '%u:%g' '/data/data/<pkg>'`.
 5. Extracting the archive: `tar -xzf - -C /data/data`, streamed from the
    local file via `adb shell ... < file` (the file's contents become
    the remote command's stdin).

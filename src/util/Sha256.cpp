@@ -76,7 +76,18 @@ void Sha256::processBlock(const uint8_t block[64]) {
     state_[4] += e; state_[5] += f; state_[6] += g; state_[7] += h;
 }
 
+/// Absorbs one byte without the finalized-state guard update() carries, so
+/// the padding hexDigest() appends is not rejected by its own bookkeeping.
+void Sha256::appendByte(uint8_t byte) {
+    buffer_[bufferLength_++] = byte;
+    if (bufferLength_ == sizeof(buffer_)) {
+        processBlock(buffer_);
+        bufferLength_ = 0;
+    }
+}
+
 void Sha256::update(const void* data, size_t length) {
+    if (!digest_.empty()) return; // Already finalized; see hexDigest().
     const auto* bytes = static_cast<const uint8_t*>(data);
     totalLength_ += length;
 
@@ -95,14 +106,19 @@ void Sha256::update(const void* data, size_t length) {
 }
 
 std::string Sha256::hexDigest() {
+    // Padding runs through update(), which mutates the very state that
+    // decides what the padding should be. Returning the cached digest keeps a
+    // second call from hashing a second round of padding into the first --
+    // which silently produced a wrong checksum rather than an error.
+    if (!digest_.empty()) return digest_;
+
     uint64_t bitLength = totalLength_ * 8;
 
     uint8_t pad = 0x80;
-    update(&pad, 1);
+    appendByte(pad);
 
-    uint8_t zero = 0x00;
     while (bufferLength_ != 56) {
-        update(&zero, 1);
+        appendByte(0x00);
     }
 
     uint8_t lengthBytes[8];
@@ -118,7 +134,8 @@ std::string Sha256::hexDigest() {
     for (int i = 0; i < 8; ++i) {
         std::snprintf(hex + i * 8, 9, "%08x", state_[i]);
     }
-    return std::string(hex, 64);
+    digest_.assign(hex, 64);
+    return digest_;
 }
 
 std::string sha256Hex(const std::string& data) {

@@ -1,4 +1,4 @@
-# 📜 Changelog
+# Changelog
 
 All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
@@ -80,6 +80,48 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Restoring shared storage from a standard-mode backup nested every
+  folder inside itself.** `adb push` follows `cp`'s rule — when the
+  destination already exists as a directory, the source is copied *into*
+  it — so pushing `DCIM` to `/sdcard/DCIM` landed the photos in
+  `/sdcard/DCIM/DCIM` on any device that already had a `DCIM` folder,
+  which is every device. Each top-level entry is now pushed to `/sdcard`
+  itself, which merges into the existing directory.
+- `fork()`ing no longer allocates in the child. The argv array is built
+  before the fork, because the only async-signal-safe thing a forked
+  child of a multi-threaded process may do is `exec` — and `abp gui`
+  forks from a worker thread while other threads serve HTTP, so a child
+  that allocated could deadlock on a malloc lock held at fork time.
+- `Sha256::hexDigest()` is idempotent. Finalizing appends padding through
+  the same state the padding is computed from, so calling it twice used
+  to hash a second round of padding and quietly return a different,
+  wrong digest; the digest is now cached and later `update()`s ignored.
+- `Logger` invokes its sink with its own mutex released. Holding it fixed
+  the lock order as "logger, then whatever the sink locks", which the
+  GUI's job-runner sink could have inverted.
+- The GUI's HTTP server no longer leaks a connection, or tears itself
+  down, when the process cannot start another thread: the request is
+  served inline instead and the socket still closes.
+- A finished GUI job's thread is joined on destruction rather than
+  reaching `std::terminate` if the serve loop ever unwinds.
+- Two `--pull-path` arguments that sanitize to the same directory name
+  (`/data/app` and `/data_app`) no longer overwrite each other's capture
+  while the manifest claims both; the second gets a numbered suffix. The
+  same de-duplication now applies to split APKs sharing a basename.
+- `abp restore` no longer counts a package as restored when the backup
+  held nothing to write back for it. Such packages are reported
+  separately as having nothing to restore (`packages_skipped` in the
+  GUI's JSON), so the summary cannot overstate what the run achieved.
+- Every value interpolated into a device command is now shell-quoted at
+  the point of use as well as validated beforehand — previously
+  `RootBackend` and `pm path` relied on the package-name validator alone.
+- A backup whose shared storage was captured in the other mode now gets
+  the explanation it was meant to: the manifest's own
+  `shared_storage_is_directory` is checked before the on-disk shape, so
+  the message is no longer unreachable behind a failing file test.
+- The HTTP server no longer labels an unlisted status code "OK"
+  (`503 OK`), and its request-header cap is enforced after each read
+  rather than one whole read late.
 - Fixed a dangling reference when reading the manifest: `JsonValue::get()`
   returns by value, so iterating `get(key).items()` directly walked a
   destroyed temporary.
@@ -128,6 +170,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- `abp restore` reports three disjoint package counts — restored, failed,
+  and nothing to restore — instead of folding the third into the first.
+- The README and docs no longer decorate their headings, tables and
+  diagrams with emoji.
+- `-s`/`--serial` is only pre-scanned for the subcommands that take it,
+  so `abp gui -s` complains about an unknown gui option rather than a
+  missing serial value.
 - `-v` is now `--verbose` (as in most CLIs); use `-V`/`--version` for
   the version. `-v`, `--verbose`, `--no-color` and `--adb-path` are all
   accepted anywhere on the command line.

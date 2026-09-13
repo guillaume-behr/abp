@@ -209,7 +209,7 @@ ABP_TEST(adb_package_apk_paths_returns_the_full_set_for_one_package) {
     FakeAdb fake(R"SH(
 shift $(( $# - 1 ))
 case "$1" in
-  "pm path com.example.app")
+  "pm path 'com.example.app'")
     echo "package:/data/app/~~a==/com.example.app-b==/base.apk"
     echo "package:/data/app/~~a==/com.example.app-b==/split_config.en.apk"
     exit 0;;

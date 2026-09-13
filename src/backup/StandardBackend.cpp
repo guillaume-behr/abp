@@ -257,14 +257,17 @@ bool StandardBackend::restoreSharedStorage(const AdbClient& adb, const fs::path&
                                             const Manifest& manifest) {
     if (!manifest.sharedStorageIncluded) return false;
 
-    fs::path localDir = backupDir / manifest.sharedStorageArchive;
-    if (!fs::exists(localDir) || !fs::is_directory(localDir)) return false;
-
+    // Check what the manifest says before what is on disk, so a root-mode
+    // backup opened by the standard backend gets the explanation rather than
+    // the generic "nothing to restore" a failed is_directory() would give.
     if (!manifest.sharedStorageIsDirectory) {
         Logger::error("This backup's shared storage is a tar archive captured in root mode; "
                       "it cannot be restored through the standard backend.");
         return false;
     }
+
+    fs::path localDir = backupDir / manifest.sharedStorageArchive;
+    if (!fs::exists(localDir) || !fs::is_directory(localDir)) return false;
 
     Logger::info("Pushing shared storage back to /sdcard.");
 
@@ -284,9 +287,14 @@ bool StandardBackend::restoreSharedStorage(const AdbClient& adb, const fs::path&
             Logger::error("Could not walk " + localDir.string() + ": " + ec.message());
             return false;
         }
-        std::string remoteTarget = "/sdcard/" + it->path().filename().string();
-        if (!adb.push(it->path().string(), remoteTarget)) {
-            Logger::error("Failed to push " + it->path().string() + " to " + remoteTarget);
+        // The destination is the *parent*, never "/sdcard/<name>". `adb push`
+        // follows cp's rule: when the destination already exists as a
+        // directory, the source is copied inside it -- so pushing DCIM to
+        // "/sdcard/DCIM" on a device that already has one lands the files in
+        // /sdcard/DCIM/DCIM. Naming the parent merges into the existing
+        // directory, and still creates it when the device has none.
+        if (!adb.push(it->path().string(), "/sdcard")) {
+            Logger::error("Failed to push " + it->path().string() + " to /sdcard");
             allOk = false;
         } else {
             ++pushed;

@@ -12,19 +12,24 @@ class Sha256 {
 public:
     Sha256();
 
+    /// Appends `length` bytes to the hash. Ignored once hexDigest() has been
+    /// called: the state is finalized at that point and cannot absorb more.
     void update(const void* data, size_t length);
 
     /// Finalizes the hash and returns it as a 64-character lowercase hex
-    /// string. The object must not be updated again afterwards.
+    /// string. Further update() calls are ignored, and calling this again
+    /// returns the same digest rather than hashing the padding a second time.
     std::string hexDigest();
 
 private:
     void processBlock(const uint8_t block[64]);
+    void appendByte(uint8_t byte);
 
     uint32_t state_[8];
     uint64_t totalLength_ = 0;
     uint8_t buffer_[64];
     size_t bufferLength_ = 0;
+    std::string digest_; ///< Non-empty once finalized.
 };
 
 /// Convenience: hashes an in-memory buffer.

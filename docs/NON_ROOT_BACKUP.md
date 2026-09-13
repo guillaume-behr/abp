@@ -1,4 +1,4 @@
-# 🔐 What standard (non-root) mode does
+# What standard (non-root) mode does
 
 Standard mode is what `abp` uses when no root access is detected, or when
 you pass `--standard`. It is not a single mechanism: `abp` tries the
@@ -99,6 +99,29 @@ legacy_backup.ab`, which writes back the whole archive. `abp` only invokes
 it if at least one selected package needs it, and warns when doing so will
 also restore packages you deselected — `adb restore` offers no way to
 filter.
+
+### Shared storage
+
+Standard mode captures `/sdcard` as a directory tree (there is no
+on-device `tar` to stream through without root), so the restore pushes it
+back a directory at a time:
+
+```sh
+adb push shared_storage/DCIM     /sdcard
+adb push shared_storage/Download /sdcard
+...
+```
+
+The destination is the **parent**, never `/sdcard/DCIM`. `adb push`
+follows `cp`'s rule: when the destination already exists as a directory,
+the source is copied *inside* it. Naming `/sdcard/DCIM` on a device that
+already has a `DCIM` folder — which is every device — would land the
+photos in `/sdcard/DCIM/DCIM`. Naming `/sdcard` merges into the existing
+directory, and still creates it on a device that has none.
+
+Files are merged, not synchronised: anything already on the device with
+the same path is overwritten, and anything the backup does not contain is
+left alone. `abp` never deletes from `/sdcard`.
 
 ## Failure modes worth knowing
 

@@ -1,4 +1,4 @@
-# 🚀 Usage reference
+# Usage reference
 
 ## Global options
 
@@ -194,6 +194,33 @@ when doing so will also restore packages you deselected.
 APK installation always respects the filters. Shared storage has no
 per-package concept, so `--only`/`--exclude` don't apply to it at all —
 use `--no-shared` to skip it entirely.
+
+Restoring shared storage from a standard-mode backup merges the captured
+tree into `/sdcard`: existing files at the same paths are overwritten, and
+files the device has that the backup does not are left alone. `abp` never
+deletes anything from `/sdcard`.
+
+### Reading the restore summary
+
+```
+Restore complete.
+  Packages restored: 14
+  Packages failed:   1
+  Nothing to restore: 3 (no APK and no data in the backup)
+  Shared storage:    restored
+```
+
+The three package counts are disjoint:
+
+- **restored** — an APK was reinstalled, app data was written back, or
+  both.
+- **failed** — something was attempted and did not work; the reason is in
+  the log and in that package's `error` field.
+- **nothing to restore** — the package is listed in the manifest, but the
+  backup holds neither an APK nor captured data for it. Most often this
+  is an app that `adb backup` declined to capture and whose APK was
+  skipped with `--no-apks`. It is not a failure, and counting it as a
+  success would overstate what the run achieved.
 
 Examples:
 

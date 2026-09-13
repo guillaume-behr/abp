@@ -1,4 +1,4 @@
-# 🖥️ The web GUI
+# The web GUI
 
 ```sh
 abp gui
@@ -11,18 +11,18 @@ backups already on disk.
 
 ```mermaid
 flowchart LR
-    B["🌐 Browser<br/><sub>single-page app</sub>"] <-- "JSON over 127.0.0.1" --> S["🖥️ GuiServer<br/><sub>src/gui</sub>"]
-    S --> M["🧭 BackupManager<br/><sub>backup / restore jobs</sub>"]
-    S --> T["🗂️ BackupStore<br/><sub>read-only backup explorer</sub>"]
-    M --> D[📱 Device]
-    T --> F[("💾 backup directories")]
+    B["Browser<br/><sub>single-page app</sub>"] <-- "JSON over 127.0.0.1" --> S["GuiServer<br/><sub>src/gui</sub>"]
+    S --> M["BackupManager<br/><sub>backup / restore jobs</sub>"]
+    S --> T["BackupStore<br/><sub>read-only backup explorer</sub>"]
+    M --> D[Device]
+    T --> F[("backup directories")]
 ```
 
 There is nothing to install: the page is compiled into the `abp` binary,
 loads no fonts, scripts or styles from the network, and talks only to the
 server that served it.
 
-## ⚙️ Options
+## Options
 
 | Option | Default | Description |
 |---|---|---|
@@ -36,7 +36,7 @@ server that served it.
 `--adb-path` / `ABP_ADB_PATH` work here exactly as they do for the other
 subcommands.
 
-## 🧭 What each view does
+## What each view does
 
 - **Devices** — everything `adb devices -l` can see, with model, Android
   version and root status. Pick one; backups and restores target it.
@@ -59,7 +59,7 @@ bottom of the page — the same messages the CLI prints, plus the final
 summary. One job runs at a time; starting a second while one is in
 flight is refused.
 
-## 🔒 Security model
+## Security model
 
 The GUI can install apps and overwrite app data on a connected device, so
 it is locked down by default:
@@ -83,7 +83,7 @@ reachable from your network; `abp` warns when you do. Anyone who can
 reach the port *and* has the token can then back up and restore your
 device, so don't do it on a network you don't trust.
 
-## 🔌 The HTTP API
+## The HTTP API
 
 The GUI is a plain client of a small JSON API, which you can also drive
 yourself — for a dashboard, a cron job, or a script:
@@ -124,6 +124,24 @@ optional and defaults to the same thing the CLI does:
   "exclude": []
 }
 ```
+
+A finished job carries its summary in `job.result`. For a restore that is:
+
+```json
+{
+  "success": true,
+  "packages_restored": 14,
+  "packages_failed": 1,
+  "packages_skipped": 3,
+  "shared_storage_restored": true,
+  "messages": []
+}
+```
+
+`packages_skipped` counts packages that were selected but that the backup
+held nothing to write back for — no APK and no captured data. They are
+neither restored nor failed; see the restore summary section of
+[USAGE.md](USAGE.md).
 
 Errors come back as `{"error": "..."}` with a meaningful status code
 (`400` bad request, `403` bad token or sandbox escape, `404` unknown

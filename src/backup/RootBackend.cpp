@@ -34,9 +34,11 @@ void RootBackend::backupAppData(const AdbClient& adb, const fs::path& outDir,
             continue;
         }
 
+        const std::string dataDirArg = strutil::shellQuote("/data/data/" + pkg.name);
+
         bool checkOk = false;
         std::string exists =
-            adb.shellText(asRoot("[ -d /data/data/" + pkg.name + " ] && echo yes || echo no"), &checkOk);
+            adb.shellText(asRoot("[ -d " + dataDirArg + " ] && echo yes || echo no"), &checkOk);
         if (!checkOk || exists != "yes") {
             continue; // No private data directory; nothing to capture.
         }
@@ -44,7 +46,8 @@ void RootBackend::backupAppData(const AdbClient& adb, const fs::path& outDir,
         std::string fileName = fsutil::sanitizeForFilename(pkg.name) + ".tar.gz";
         fs::path localPath = dataDir / fileName;
 
-        std::string tarCmd = asRoot("tar -czf - -C /data/data " + pkg.name + " 2>/dev/null");
+        std::string tarCmd =
+            asRoot("tar -czf - -C /data/data " + strutil::shellQuote(pkg.name) + " 2>/dev/null");
         if (!adb.execOutToFile(tarCmd, localPath.string())) {
             entry->error = "failed to capture app data via tar";
             std::error_code ec;
@@ -94,29 +97,32 @@ void RootBackend::restoreAppData(const AdbClient& adb, const fs::path& backupDir
         // Stop the app first: extracting over the data directory of a running
         // process leaves it with a half-old, half-new view of its own files,
         // and anything it writes afterwards can clobber the restore.
-        adb.shell(asRoot("am force-stop " + entry.name + " 2>/dev/null"));
+        const std::string packageArg = strutil::shellQuote(entry.name);
+        const std::string dataDirArg = strutil::shellQuote("/data/data/" + entry.name);
+
+        adb.shell(asRoot("am force-stop " + packageArg + " 2>/dev/null"));
 
         // Snapshot the UID/GID the package manager just assigned to this
         // (freshly (re)installed, empty) app before we overwrite its data
         // directory with the archive's original ownership.
         bool statOk = false;
         std::string owner =
-            adb.shellText(asRoot("stat -c '%u:%g' /data/data/" + entry.name + " 2>/dev/null"), &statOk);
+            adb.shellText(asRoot("stat -c '%u:%g' " + dataDirArg + " 2>/dev/null"), &statOk);
 
         std::string extractCmd =
-            asRoot("mkdir -p /data/data/" + entry.name + " && tar -xzf - -C /data/data 2>/dev/null");
+            asRoot("mkdir -p " + dataDirArg + " && tar -xzf - -C /data/data 2>/dev/null");
         if (!adb.shellFromFile(extractCmd, archivePath.string())) {
             entry.error = "failed to extract app data archive on device";
             continue;
         }
 
         if (statOk && !owner.empty()) {
-            adb.shell(asRoot("chown -R " + owner + " /data/data/" + entry.name + " 2>/dev/null"));
+            adb.shell(asRoot("chown -R " + strutil::shellQuote(owner) + " " + dataDirArg + " 2>/dev/null"));
         } else {
             Logger::warn("Could not determine target UID for " + entry.name +
                          "; restored data may have the wrong owner until the app is opened.");
         }
-        adb.shell(asRoot("restorecon -R /data/data/" + entry.name + " 2>/dev/null"));
+        adb.shell(asRoot("restorecon -R " + dataDirArg + " 2>/dev/null"));
     }
 }
 
@@ -147,14 +153,17 @@ bool RootBackend::backupSharedStorage(const AdbClient& adb, const fs::path& outD
 bool RootBackend::restoreSharedStorage(const AdbClient& adb, const fs::path& backupDir, const Manifest& manifest) {
     if (!manifest.sharedStorageIncluded) return false;
 
-    fs::path archivePath = backupDir / manifest.sharedStorageArchive;
-    if (!fs::exists(archivePath)) return false;
-
+    // What the manifest says comes first: a standard-mode backup opened by
+    // the root backend must get the explanation below, not the silent false
+    // a missing-file check would return for a directory capture.
     if (manifest.sharedStorageIsDirectory) {
         Logger::error("This backup's shared storage is a pulled directory tree, not a tar archive; "
                       "it cannot be restored through the root backend.");
         return false;
     }
+
+    fs::path archivePath = backupDir / manifest.sharedStorageArchive;
+    if (!fs::exists(archivePath)) return false;
 
     if (!integrity::checksumMatches(archivePath, manifest.sharedStorageArchiveSha256)) {
         Logger::error("Checksum mismatch for shared storage archive, refusing to restore.");

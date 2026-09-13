@@ -223,6 +223,16 @@ public:
         std::vector<std::pair<std::string, std::string>> newLines;
     };
 
+    /// A finished job leaves its thread joinable until the next start() or an
+    /// explicit join(), and destroying a joinable std::thread calls
+    /// std::terminate. That must not be how abp exits if the serve loop ever
+    /// unwinds on an exception instead of returning normally.
+    ~JobRunner() { join(); }
+
+    JobRunner() = default;
+    JobRunner(const JobRunner&) = delete;
+    JobRunner& operator=(const JobRunner&) = delete;
+
     bool busy() const {
         std::lock_guard<std::mutex> lock(mutex_);
         return running_;
@@ -378,6 +388,7 @@ JsonValue restoreSummaryResultJson(const RestoreSummary& summary) {
     object.set("success", summary.success && summary.packagesFailed == 0);
     object.set("packages_restored", summary.packagesRestored);
     object.set("packages_failed", summary.packagesFailed);
+    object.set("packages_skipped", summary.packagesSkipped);
     object.set("shared_storage_restored", summary.sharedStorageRestored);
     JsonValue messages = JsonValue::makeArray();
     for (const auto& message : summary.messages) messages.push_back(message);
@@ -531,9 +542,10 @@ private:
         std::string rootText = request.param("root");
         fs::path root = rootText.empty() ? options_.backupRoot : expandUserPath(rootText);
 
+        std::error_code ec;
         JsonValue object = JsonValue::makeObject();
         object.set("root", root.string());
-        object.set("exists", fs::is_directory(root));
+        object.set("exists", fs::is_directory(root, ec) && !ec);
 
         JsonValue backups = JsonValue::makeArray();
         for (const auto& info : BackupStore::scan(root, options_.scanDepth)) {
