@@ -41,6 +41,15 @@ struct PackageBackupEntry {
     unsigned long long dataArchiveBytes = 0;
     std::string dataArchiveSha256;
 
+    /// Device-protected storage, /data/user_de/0/<pkg> (root mode only).
+    /// Since Android 7 apps can keep data there that must be readable before
+    /// the user unlocks the phone -- the SMS/MMS database of
+    /// com.android.providers.telephony lives there, not in /data/data.
+    /// Empty when the package has no such directory.
+    std::string deDataArchive;
+    unsigned long long deDataArchiveBytes = 0;
+    std::string deDataArchiveSha256;
+
     bool externalDataIncluded = false;
     std::string externalDataArchive; ///< /sdcard/Android/{data,obb}/<pkg> capture, if any.
     unsigned long long externalDataArchiveBytes = 0;
@@ -65,12 +74,26 @@ struct FilesystemCapture {
     std::string note; ///< Why it is incomplete, when abp could tell.
 };
 
+/// A portable export of personal data read through Android's own content
+/// providers (contacts as vCard, SMS and call log as JSON). Works without
+/// root, and unlike an app's raw database it can be opened or imported on
+/// any phone. abp never writes SMS or call log back: Android only lets the
+/// default SMS app do that.
+struct PersonalDataExport {
+    std::string kind;       ///< "contacts", "sms" or "call_log".
+    std::string format;     ///< "vcard" or "json".
+    std::string localPath;  ///< Relative to the backup directory, e.g. "personal/contacts.vcf".
+    int itemCount = 0;
+    unsigned long long bytes = 0;
+    std::string sha256;
+};
+
 /// Full description of one abp backup: device identity, the mode used to
 /// produce it, and every package/shared-storage archive it contains. This
 /// is what gets serialized to `manifest.json` at the root of a backup
 /// directory. See docs/MANIFEST.md for the on-disk schema.
 struct Manifest {
-    int formatVersion = 3;
+    int formatVersion = 4;
     std::string abpVersion;
     std::string createdAtUtc;
     std::string mode; ///< "root" or "standard"
@@ -94,6 +117,9 @@ struct Manifest {
     /// from the per-package and shared-storage captures above: these are raw
     /// filesystem copies that abp records but never pushes back on its own.
     std::vector<FilesystemCapture> filesystemCaptures;
+
+    /// Contacts / SMS / call log exports under `personal/` (see --no-personal).
+    std::vector<PersonalDataExport> personalDataExports;
 
     std::vector<PackageBackupEntry> packages;
 

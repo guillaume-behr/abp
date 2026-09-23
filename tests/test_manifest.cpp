@@ -72,7 +72,7 @@ ABP_TEST(manifest_defaults_are_written_and_read_back) {
     Manifest empty;
     Manifest parsed = Manifest::fromJson(empty.toJson());
 
-    ABP_CHECK_EQ(parsed.formatVersion, 3);
+    ABP_CHECK_EQ(parsed.formatVersion, 4);
     ABP_CHECK_EQ(parsed.packages.size(), 0u);
     ABP_CHECK(!parsed.sharedStorageIncluded);
     ABP_CHECK(!parsed.device.isRooted());

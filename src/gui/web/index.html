@@ -236,7 +236,7 @@ dialog::backdrop { background: rgba(0,0,0,.5); }
 
 <section class="view" id="view-backup">
     <h2>Back up a device</h2>
-    <p class="hint">Captures APKs, private app data and shared storage into a new backup directory.</p>
+    <p class="hint">Captures APKs, private app data, shared storage, contacts and messages into a new backup directory.</p>
     <div id="backup-device-banner"></div>
 
     <div class="card">
@@ -254,6 +254,7 @@ dialog::backdrop { background: rgba(0,0,0,.5); }
             <label class="toggle"><input type="checkbox" id="b-apks" checked><span><span class="t">APKs</span><small>base + split APK files</small></span></label>
             <label class="toggle"><input type="checkbox" id="b-data" checked><span><span class="t">App data</span><small>private per-app data</small></span></label>
             <label class="toggle"><input type="checkbox" id="b-shared" checked><span><span class="t">Shared storage</span><small>/sdcard photos, downloads…</small></span></label>
+            <label class="toggle"><input type="checkbox" id="b-personal" checked><span><span class="t">Contacts &amp; messages</span><small>contacts (vCard), SMS, call log</small></span></label>
             <label class="toggle"><input type="checkbox" id="b-system"><span><span class="t">System apps</span><small>off by default</small></span></label>
             <label class="toggle"><input type="checkbox" id="b-all-files"><span><span class="t">Device partitions</span><small>raw <span class="mono">adb pull</span> of /data, /system, … (large)</small></span></label>
         </div>
@@ -312,6 +313,7 @@ dialog::backdrop { background: rgba(0,0,0,.5); }
             <label class="toggle"><input type="checkbox" id="r-apks" checked><span><span class="t">APKs</span><small>reinstall apps</small></span></label>
             <label class="toggle"><input type="checkbox" id="r-data" checked><span><span class="t">App data</span><small>overwrites existing data</small></span></label>
             <label class="toggle"><input type="checkbox" id="r-shared" checked><span><span class="t">Shared storage</span><small>pushes /sdcard back</small></span></label>
+            <label class="toggle"><input type="checkbox" id="r-personal" checked><span><span class="t">Contacts</span><small>copies the vCard to Download for import</small></span></label>
         </div>
     </div>
 
@@ -630,6 +632,7 @@ $("start-backup").addEventListener("click", async () => {
         include_data: $("b-data").checked,
         include_shared: $("b-shared").checked,
         include_system: $("b-system").checked,
+        include_personal: $("b-personal").checked,
         all_files: $("b-all-files").checked,
         mode: document.querySelector("input[name=b-mode]:checked").value,
     };
@@ -640,6 +643,7 @@ $("start-backup").addEventListener("click", async () => {
     }
 
     const scope = [body.include_apks && "APKs", body.include_data && "app data", body.include_shared && "shared storage",
+        body.include_personal && "contacts and messages",
         body.all_files && "every device partition"].filter(Boolean).join(", ") || "nothing";
     const ok = await ask("Start backup?", "Back up " + scope + " from " + device.serial + " into " + output + "." +
         (body.all_files ? " Pulling whole partitions can take a long time and use many gigabytes." : ""));
@@ -697,6 +701,7 @@ function renderRestoreManifest() {
     facts.append(el("span", { class: "badge", text: "captured " + (manifest.created_at || "?") }));
     facts.append(el("span", { class: "badge", text: [device.manufacturer, device.model].filter(Boolean).join(" ") || device.serial || "unknown device" }));
     if (manifest.shared_storage_included) facts.append(el("span", { class: "badge", text: "shared storage " + manifest.shared_storage_size_human }));
+    for (const item of manifest.personal_data_exports || []) facts.append(el("span", { class: "badge", text: personalLabel(item) }));
     node.append(facts);
 
     const target = currentDevice();
@@ -752,6 +757,7 @@ $("start-restore").addEventListener("click", async () => {
         include_apks: $("r-apks").checked,
         include_data: $("r-data").checked,
         include_shared: $("r-shared").checked,
+        include_personal: $("r-personal").checked,
     };
     if (selected.length !== state.restorePackages.length) body.only = selected;
 
@@ -877,6 +883,16 @@ async function openBackup(path) {
     scroll.append(table);
     card.append(scroll);
 
+    const personal = manifest.personal_data_exports || [];
+    if (personal.length > 0) {
+        card.append(el("h3", { style: "margin-top:16px", text: "Contacts & messages" }));
+        const row = el("div", { class: "row" });
+        for (const item of personal) {
+            row.append(el("span", { class: "badge good", title: item.local_path, text: personalLabel(item) + " · " + item.size_human }));
+        }
+        card.append(row);
+    }
+
     const captures = manifest.filesystem_captures || [];
     if (captures.length > 0) {
         card.append(el("h3", { style: "margin-top:16px", text: "Device paths (not restored automatically)" }));
@@ -905,6 +921,11 @@ async function openBackup(path) {
     node.append(card);
     node.scrollIntoView({ behavior: "smooth", block: "start" });
     browseFiles(summary.path, "", browser);
+}
+
+function personalLabel(item) {
+    const noun = { contacts: "contacts", sms: "SMS", call_log: "calls" }[item.kind] || item.kind;
+    return item.item_count + " " + noun;
 }
 
 function captureMethodLabel(method) {
@@ -1046,6 +1067,10 @@ function appendResult(job) {
         if (result.packages_via_legacy_backup) lines.push("  via adb backup: " + result.packages_via_legacy_backup + " (partial; apps may have opted out)");
         lines.push("Errors:         " + (result.packages_with_errors ?? 0));
         lines.push("Shared storage: " + (result.shared_storage_included ? "included" : "skipped"));
+        const exported = (n) => (n === undefined || n < 0) ? "not exported" : String(n);
+        lines.push("Contacts:       " + exported(result.contacts_exported));
+        lines.push("SMS messages:   " + exported(result.sms_exported));
+        lines.push("Call log:       " + exported(result.call_log_exported));
         if (result.filesystem_capture_count) {
             lines.push("Device paths:   " + result.filesystem_capture_count + " pulled" +
                 (result.filesystem_partial_count ? " (" + result.filesystem_partial_count + " only partially readable)" : ""));
@@ -1057,6 +1082,9 @@ function appendResult(job) {
         lines.push("Packages failed:   " + (result.packages_failed ?? 0));
         if (result.packages_skipped) lines.push("Nothing to restore: " + result.packages_skipped + " (no APK and no data in the backup)");
         lines.push("Shared storage:    " + (result.shared_storage_restored ? "restored" : "skipped"));
+        if (result.contacts_import_path) {
+            lines.push("Contacts:          copied to " + result.contacts_import_path + " (Contacts > Settings > Import)");
+        }
         if (result.filesystem_captures_present) {
             lines.push("Device paths:      " + result.filesystem_captures_present + " present, not restored (copy by hand)");
         }

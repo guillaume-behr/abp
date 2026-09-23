@@ -70,9 +70,10 @@ files. `abp` gives you a single tool that:
 | **Full restore** | Reinstalls APKs, restores app data with UID remapping + SELinux relabeling, restores shared storage. |
 | **Root backend** | Streams `tar` archives of each app's data directory (and of `/sdcard`) over `adb exec-out`/`shell` — never buffers large data in host memory. |
 | **Standard backend** | No root required: per-app `tar` via `run-as` for debuggable apps, legacy `adb backup` for the rest, `adb pull`/`push` for shared storage. |
+| **Contacts, SMS & call log** | Exported to vCard and JSON without root, readable and importable anywhere; with root, the providers' databases are captured whole too. |
 | **Whole-partition pull** | `--all-files` / `--pull-path` copy device paths verbatim via `adb pull`, recording what was readable. |
 | **Web GUI** | `abp gui` — a local, dependency-free web app for backing up, restoring and exploring backups. |
-| **Selective ops** | `--only`, `--exclude`, `--no-apks`, `--no-data`, `--no-shared`, `--system`. |
+| **Selective ops** | `--only`, `--exclude`, `--no-apks`, `--no-data`, `--no-shared`, `--no-personal`, `--system`. |
 | **Integrity checking** | Every archive is SHA-256 checksummed at backup time and verified before it's written back to the device. |
 | **No shell-injection surface** | Every value interpolated into a device command is validated *and* shell-quoted — never raw string concatenation of untrusted input. |
 
@@ -90,7 +91,10 @@ coverage varies app by app rather than all-or-nothing:
 |---|---|---|---|
 | **APKs** (base + all splits) | Full | Full | Full |
 | **Private app data** (`/data/data/<pkg>`) | Complete, every app | Complete, via `run-as` | Partial — only via legacy `adb backup`, see below |
-| **Shared storage** (`/sdcard`) | Single `tar` stream | `adb pull` tree | `adb pull` tree |
+| **Private app data, device-protected** (`/data/user_de/0/<pkg>`) | Complete, every app | No | No |
+| **Shared storage** (`/sdcard`: photos, videos, downloads) | Single `tar` stream | `adb pull` tree | `adb pull` tree |
+| **Contacts** | vCard export; database too with `--system` | vCard export | vCard export |
+| **SMS / call log** | JSON export; SMS database too with `--system` | JSON export | JSON export |
 | **Per-app archives** | One per package | One per package | No — one shared `.ab` archive |
 | **Selective restore** (`--only`/`--exclude`) | Per package | Per package | No — archive restores as a whole |
 | **SHA-256 integrity check** | Yes | Yes | No — not available for `adb backup` output |
@@ -99,6 +103,11 @@ coverage varies app by app rather than all-or-nothing:
 | **System apps** | With `--system` | APKs only (system apps are not debuggable) | APKs only |
 | **Whole partitions** (`--all-files`) | All of `/data`, `/system`, ... | Readable parts only — most of `/data` is root-only | Readable parts only |
 | **OS state** (Wi-Fi, accounts, settings) | Out of scope | Out of scope | Out of scope |
+
+Contacts, SMS and call log are exported through Android's content
+providers, so each kind depends on the device letting the adb shell read
+it; one it refuses is skipped with a warning. MMS are not exported. See
+[USAGE.md](docs/USAGE.md#contacts-sms-and-call-log).
 
 **How an app lands in each non-root column.** `run-as` runs a command as
 an app's own UID, which Android permits only for apps built with

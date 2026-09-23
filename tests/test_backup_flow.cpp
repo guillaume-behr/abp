@@ -226,3 +226,99 @@ exit 1
     ABP_CHECK(log.find("tar -xzf") != std::string::npos);
     ABP_CHECK(log.find("chown -R '10123:10123' '/data/data/com.example.app'") != std::string::npos);
 }
+
+ABP_TEST(root_backup_captures_device_protected_data_too) {
+    // The SMS database lives in /data/user_de/0/com.android.providers.telephony,
+    // not in /data/data, so root mode must tar both.
+    FlowFixture fixture(R"SH(
+[ "$1" = "-s" ] && shift 2
+case "$2" in
+  *"[ -d '/data/data/com.android.providers.telephony' ]"*) echo yes; exit 0;;
+  *"[ -d '/data/user_de/0/com.android.providers.telephony' ]"*) echo yes; exit 0;;
+  *"-C '/data/data' 'com.android.providers.telephony'"*) printf 'CE_ARCHIVE'; exit 0;;
+  *"-C '/data/user_de/0' 'com.android.providers.telephony'"*) printf 'DE_ARCHIVE_WITH_SMS'; exit 0;;
+esac
+exit 1
+)SH");
+
+    PackageInfo pkg;
+    pkg.name = "com.android.providers.telephony";
+    Manifest manifest;
+    PackageBackupEntry entry;
+    entry.name = pkg.name;
+    manifest.packages.push_back(entry);
+
+    RootAccess root;
+    root.method = RootMethod::AdbdRoot;
+    RootBackend(root).backupAppData(AdbClient("SERIAL"), fixture.backupDir(), {pkg}, manifest);
+
+    const PackageBackupEntry& captured = manifest.packages[0];
+    ABP_CHECK(captured.dataIncluded);
+    ABP_CHECK_EQ(captured.error, std::string());
+    ABP_CHECK_EQ(captured.dataArchive, "data/com.android.providers.telephony.tar.gz");
+    ABP_CHECK_EQ(captured.deDataArchive, "data/com.android.providers.telephony.de.tar.gz");
+    ABP_CHECK_EQ(captured.deDataArchiveSha256.size(), 64u);
+    ABP_CHECK_EQ(fsutil::readTextFile(fixture.backupDir() / captured.deDataArchive), "DE_ARCHIVE_WITH_SMS");
+}
+
+ABP_TEST(root_restore_writes_back_device_protected_data_with_its_own_owner) {
+    FlowFixture fixture(R"SH(
+[ "$1" = "-s" ] && shift 2
+case "$2" in
+  *"am force-stop"*) exit 0;;
+  *"stat -c '%u:%g' '/data/data/"*) echo "1001:1001"; exit 0;;
+  *"stat -c '%u:%g' '/data/user_de/0/"*) echo "1001:1002"; exit 0;;
+  *"tar -xzf"*) cat > /dev/null; exit 0;;
+  *"chown -R"*|*"restorecon"*) exit 0;;
+esac
+exit 1
+)SH");
+
+    fsutil::ensureDirectory(fixture.backupDir() / "data");
+    fsutil::writeTextFile(fixture.backupDir() / "data" / "p.tar.gz", "ce");
+    fsutil::writeTextFile(fixture.backupDir() / "data" / "p.de.tar.gz", "de");
+
+    Manifest manifest;
+    manifest.mode = "root";
+    PackageBackupEntry entry;
+    entry.name = "com.android.providers.telephony";
+    entry.isSystemApp = true;
+    entry.dataIncluded = true;
+    entry.dataCaptureMethod = DataCaptureMethod::RootTar;
+    entry.dataArchive = "data/p.tar.gz";
+    entry.deDataArchive = "data/p.de.tar.gz";
+    manifest.packages.push_back(entry);
+
+    RootAccess root;
+    root.method = RootMethod::AdbdRoot;
+    RootBackend(root).restoreAppData(AdbClient("SERIAL"), fixture.backupDir(), manifest, {entry.name});
+
+    ABP_CHECK_EQ(manifest.packages[0].error, std::string());
+    const std::string log = fixture.readLog();
+    ABP_CHECK(log.find("tar -xzf - -C '/data/user_de/0'") != std::string::npos);
+    ABP_CHECK(log.find("chown -R '1001:1002' '/data/user_de/0/com.android.providers.telephony'") != std::string::npos);
+    ABP_CHECK(log.find("chown -R '1001:1001' '/data/data/com.android.providers.telephony'") != std::string::npos);
+}
+
+ABP_TEST(root_restore_refuses_a_corrupted_device_protected_archive) {
+    FlowFixture fixture("exit 0\n");
+    fsutil::ensureDirectory(fixture.backupDir() / "data");
+    fsutil::writeTextFile(fixture.backupDir() / "data" / "p.tar.gz", "ce");
+    fsutil::writeTextFile(fixture.backupDir() / "data" / "p.de.tar.gz", "tampered");
+
+    Manifest manifest;
+    PackageBackupEntry entry;
+    entry.name = "com.example.app";
+    entry.dataIncluded = true;
+    entry.dataArchive = "data/p.tar.gz";
+    entry.deDataArchive = "data/p.de.tar.gz";
+    entry.deDataArchiveSha256 = std::string(64, 'a');
+    manifest.packages.push_back(entry);
+
+    RootAccess root;
+    root.method = RootMethod::AdbdRoot;
+    RootBackend(root).restoreAppData(AdbClient("SERIAL"), fixture.backupDir(), manifest, {entry.name});
+
+    ABP_CHECK(manifest.packages[0].error.find("checksum mismatch") != std::string::npos);
+    ABP_CHECK(fixture.readLog().find("tar -xzf") == std::string::npos); // Neither half touched.
+}

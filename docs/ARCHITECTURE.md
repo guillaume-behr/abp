@@ -78,6 +78,16 @@ chosen backend, and read/write `manifest.json`.
 `AdbClient`, and never contains backend-specific commands — that's the
 backend's job.
 
+## PersonalData
+
+Exports contacts (vCard), SMS and call log (JSON) through Android's
+content providers with `adb shell content`, independently of the backend:
+it needs no root and runs in both modes. `parseContentQuery()` turns the
+tool's unescaped `Row: n col=value, ...` output into rows by relying on
+the known projection, with the one free-text column placed last. The
+exports are recorded in the manifest's `personal_data_exports`; on
+restore only `contacts.vcf` is copied back, for the user to import.
+
 ## IBackupBackend
 
 A small strategy interface (`backupAppData`, `restoreAppData`,

@@ -11,6 +11,7 @@
 #include "abp/IBackupBackend.h"
 #include "abp/Logger.h"
 #include "abp/Manifest.h"
+#include "abp/PersonalData.h"
 #include "abp/RootBackend.h"
 #include "abp/StandardBackend.h"
 #include "abp/StringUtil.h"
@@ -296,13 +297,15 @@ BackupSummary BackupManager::runBackup(const BackupOptions& options) {
         // either, or when the user named packages and none of them matched.
         // A freshly reset phone has no third-party apps at all, and its photos
         // must still be backed up.
-        const bool otherCaptures = options.includeSharedStorage || !options.filesystemPaths.empty();
+        const bool otherCaptures =
+            options.includeSharedStorage || options.exportPersonalData || !options.filesystemPaths.empty();
         if (!options.onlyPackages.empty() || !otherCaptures) {
             summary.messages.push_back("No packages matched the current selection, so there is nothing to back up. "
                                         "Check --only/--exclude, or pass --system to include system apps.");
             return summary;
         }
-        Logger::warn("No packages matched the current selection; backing up only shared storage and device paths.");
+        Logger::warn("No packages matched the current selection; backing up only shared storage, contacts and "
+                     "messages, and device paths.");
     }
 
     if (options.includeApks) {
@@ -334,6 +337,14 @@ BackupSummary BackupManager::runBackup(const BackupOptions& options) {
         if (!summary.sharedStorageIncluded) {
             Logger::warn("Shared storage (/sdcard) could not be captured; the backup does not include it.");
         }
+    }
+
+    if (options.exportPersonalData) {
+        Logger::info("Exporting contacts, SMS and call log...");
+        const personal::ExportCounts counts = personal::exportPersonalData(adb, options.outputDir, manifest);
+        summary.contactsExported = counts.contacts;
+        summary.smsExported = counts.sms;
+        summary.callLogExported = counts.callLog;
     }
 
     if (!options.filesystemPaths.empty()) {
@@ -475,6 +486,27 @@ RestoreSummary BackupManager::runRestore(const RestoreOptions& options) {
 
     if (options.includeSharedStorage && !(needsRoot && !device.isRooted())) {
         summary.sharedStorageRestored = backend->restoreSharedStorage(adb, options.inputDir, manifest);
+    }
+
+    // Contacts come back as a vCard for the user to import: writing the
+    // contacts provider's database directly is only possible with root, and
+    // a root-mode backup of it is restored with the other app data anyway.
+    // SMS and call log are archival -- only the default SMS app may write
+    // messages -- so they are just reported.
+    if (options.includePersonalData && !manifest.personalDataExports.empty()) {
+        summary.contactsImportPath = personal::pushContactsForImport(adb, options.inputDir, manifest);
+        if (!summary.contactsImportPath.empty()) {
+            Logger::info("Copied the contacts export to " + summary.contactsImportPath +
+                         ". To import it, open the Contacts app, choose Settings > Import > .vcf file, and pick "
+                         "Download/abp-contacts.vcf.");
+        }
+        for (const auto& item : manifest.personalDataExports) {
+            if (item.kind == "sms" || item.kind == "call_log") {
+                Logger::info("The backup's " + item.localPath + " (" + std::to_string(item.itemCount) + " " +
+                             (item.kind == "sms" ? "messages" : "calls") +
+                             ") is a readable archive; Android does not let abp write it back.");
+            }
+        }
     }
 
     // Filesystem captures are deliberately not pushed back. They are raw

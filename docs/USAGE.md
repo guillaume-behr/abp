@@ -68,6 +68,7 @@ useful for scripting `--only`/`--exclude` lists.
 | `--no-apks`            | Skip extracting APK files. |
 | `--no-data`            | Skip app data. |
 | `--no-shared`          | Skip `/sdcard`. |
+| `--no-personal`        | Skip exporting contacts, SMS and call log. |
 | `--only PKGS`          | Comma-separated package names; only these are backed up. |
 | `--exclude PKGS`       | Comma-separated package names to skip. |
 | `--root`               | Require root; fail immediately if unavailable. |
@@ -104,7 +105,7 @@ under `filesystem/<name>` in the backup directory and is listed in
 abp backup -o ~/backups/full --all-files
 
 # Just two specific trees, and nothing else:
-abp backup -o ~/backups/misc --no-apks --no-data --no-shared \
+abp backup -o ~/backups/misc --no-apks --no-data --no-shared --no-personal \
     --pull-path /data/misc --pull-path /data/system
 ```
 
@@ -137,6 +138,38 @@ Notes:
   `/dev` can block indefinitely.
 - **These captures are not restored.** See the restore section below.
 
+### Contacts, SMS and call log
+
+Every backup also exports your contacts, text messages and call history
+into `personal/`, in formats that open anywhere, with or without root:
+
+| File | Contents |
+|---|---|
+| `personal/contacts.vcf` | Every contact as a vCard, as the phone's own "Export" produces it (photos included). Import it into any phone or address book. |
+| `personal/sms.json` | Every SMS: address, date, sent/received, read, text. MMS (picture and group messages) are not included. |
+| `personal/call_log.json` | Incoming, outgoing and missed calls with number, name, date and duration. |
+
+They are read through Android's own content providers
+(`adb shell content query`), so how much a device hands over is up to
+it: a kind it refuses to share with the adb shell is skipped with a
+warning saying why, and the rest of the backup carries on. The summary
+reports what was exported:
+
+```
+  Contacts:        312
+  SMS messages:    4821
+  Call log:        not exported
+```
+
+In root mode, and with `--system`, the underlying databases are also
+captured whole as app data (`com.android.providers.contacts`,
+`com.android.providers.telephony`), including the device-protected
+storage where Android keeps the SMS database since Android 7. That
+restores contacts and messages exactly, but only onto the same kind of
+device; the exports above work everywhere.
+
+Pass `--no-personal` to skip the exports.
+
 ### What gets captured
 
 Standard (non-root) mode captures debuggable apps completely via `run-as`
@@ -165,6 +198,7 @@ Backup complete (standard mode).
 | `--no-apks`            | Don't reinstall APKs. |
 | `--no-data`            | Don't restore app data. |
 | `--no-shared`          | Don't restore shared storage. |
+| `--no-personal`        | Don't copy the contacts export to the device. |
 | `--only PKGS`          | Comma-separated package names to restore (root mode only — see below). |
 | `--exclude PKGS`       | Comma-separated package names to skip. |
 | `-y, --yes`            | Skip the confirmation prompt. |
@@ -192,6 +226,16 @@ Packages captured into `legacy_backup.ab` by `adb backup` share one opaque
 archive that `adb restore` can only write back as a whole. `abp` only
 invokes that restore if at least one selected package needs it, and warns
 when doing so will also restore packages you deselected.
+
+**Contacts come back as a file to import.** `abp restore` copies the
+backup's `contacts.vcf` to `/sdcard/Download/abp-contacts.vcf`; open the
+Contacts app and choose *Settings > Import > .vcf file*. Writing the
+contacts database directly needs root, and a root-mode `--system` backup
+restores it with the other app data anyway. `sms.json` and
+`call_log.json` are not written back: Android only lets the default SMS
+app add messages, so they stay in the backup as a readable archive.
+After restoring system apps' data in root mode, reboot the device
+(`adb reboot`) so the contacts and SMS services reload their databases.
 
 APK installation always respects the filters. Shared storage has no
 per-package concept, so `--only`/`--exclude` don't apply to it at all —

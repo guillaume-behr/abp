@@ -11,6 +11,11 @@ DIR/
       split_config.arm64_v8a.apk   (if present)
   data/
     <package>.tar.gz               (root mode, or run-as in standard mode)
+    <package>.de.tar.gz            (root mode; device-protected data, /data/user_de/0/<package>)
+  personal/                         (unless --no-personal)
+    contacts.vcf                      (every contact, vCard)
+    sms.json                          (SMS messages)
+    call_log.json                     (call history)
   shared_storage.tar                (root mode; single tar of /sdcard)
   shared_storage/                   (standard mode; plain directory tree, pulled via adb pull)
   filesystem/                       (--all-files / --pull-path; one directory per captured path)
@@ -27,7 +32,7 @@ backup directory is self-contained and can be moved/copied as a whole.
 
 ```jsonc
 {
-  "format_version": 3,
+  "format_version": 4,
   "abp_version": "1.0.0",
   "created_at_utc": "2026-01-01T12:00:00Z",
   "mode": "root",                    // or "standard"
@@ -60,6 +65,19 @@ backup directory is self-contained and can be moved/copied as a whole.
     }
   ],
 
+  // Contacts / SMS / call log read through Android's content providers.
+  // Only the kinds the device allowed abp to read are listed.
+  "personal_data_exports": [
+    {
+      "kind": "contacts",               // contacts | sms | call_log
+      "format": "vcard",                // vcard | json
+      "local_path": "personal/contacts.vcf",
+      "item_count": 312,
+      "bytes": 104857,
+      "sha256": "…"
+    }
+  ],
+
   "packages": [
     {
       "name": "com.example.app",
@@ -73,6 +91,9 @@ backup directory is self-contained and can be moved/copied as a whole.
       "data_archive": "data/com.example.app.tar.gz",
       "data_archive_bytes": 45678,
       "data_archive_sha256": "…",
+      "de_data_archive": "data/com.example.app.de.tar.gz", // root mode; "" if none
+      "de_data_archive_bytes": 1234,
+      "de_data_archive_sha256": "…",
 
       "external_data_included": false,
       "external_data_archive": "",
@@ -113,6 +134,19 @@ Notes:
 - Only `root_tar` and `run_as_tar` packages can be restored selectively;
   `legacy_adb_backup` packages share one archive that `adb restore` can
   only write back as a whole.
+- `de_data_archive` is the package's *device-protected* storage,
+  `/data/user_de/0/<pkg>`, captured in root mode next to the usual
+  `/data/data/<pkg>`. Apps keep data there that must be readable before
+  the phone is unlocked; notably the SMS/MMS database of
+  `com.android.providers.telephony` lives there. Empty when the package
+  has no such directory.
+- `personal_data_exports` are portable copies, not app data: contacts as
+  a vCard file any contacts app can import, SMS and call log as JSON.
+  They are read without root through Android's content providers, so a
+  kind is missing when the device refused access to it. `abp restore`
+  copies `contacts.vcf` to the device's `Download` folder for you to
+  import; SMS and call log are archival, because Android only lets the
+  default SMS app write messages.
 - `external_data_included`/`external_data_archive*` fields are reserved
   for a future capture of `/sdcard/Android/data/<pkg>` (per-app external
   storage); they are always empty/false today.
@@ -138,8 +172,10 @@ Notes:
   only have come from root mode, and one without can only have come
   from the legacy archive, so the method is inferred on load. Version 3
   added `filesystem_captures`; an older `abp` would not report those as
-  part of the backup at all. Versions 1 and 2 still load, with an empty
-  `filesystem_captures`.
+  part of the backup at all. Version 4 added `de_data_archive` and
+  `personal_data_exports`; an older `abp` would restore a package's main
+  data but silently drop its device-protected half (losing SMS, among
+  others). Versions 1-3 still load, with those fields empty.
 
 See [ROOT_BACKUP.md](ROOT_BACKUP.md) for what actually produces the
 `data/*.tar.gz` and `shared_storage.tar` archives, and the top-level

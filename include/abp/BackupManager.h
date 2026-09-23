@@ -28,6 +28,12 @@ struct BackupSummary {
     int filesystemCaptureCount = 0;
     int filesystemPartialCount = 0;
 
+    /// Items exported per kind; -1 when that kind was not exported (not
+    /// requested, or the device refused access).
+    int contactsExported = -1;
+    int smsExported = -1;
+    int callLogExported = -1;
+
     unsigned long long totalBytes = 0;
     std::filesystem::path outputDir;
     std::vector<std::string> messages; ///< Fatal errors, printed to the user.
@@ -46,6 +52,9 @@ struct RestoreSummary {
     /// Raw device-path captures found in the backup. abp reports these but
     /// never writes them back -- see the note in runRestore().
     int filesystemCapturesPresent = 0;
+
+    /// Where contacts.vcf was copied on the device for import; empty if not.
+    std::string contactsImportPath;
 
     std::vector<std::string> messages;
 };

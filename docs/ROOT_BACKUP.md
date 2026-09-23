@@ -41,6 +41,14 @@ directly to a local `data/<pkg>.tar.gz`, streamed via `adb exec-out` so
 the archive never passes through `abp`'s own memory. The result is
 SHA-256 checksummed and recorded in `manifest.json`.
 
+The same is done for the package's *device-protected* storage,
+`/data/user_de/0/<pkg>`, into `data/<pkg>.de.tar.gz`. Since Android 7,
+apps keep data there that has to be readable before the phone is
+unlocked for the first time -- the SMS/MMS database of
+`com.android.providers.telephony` lives there, not under `/data/data`.
+Restore writes it back with the same stat/extract/chown/restorecon steps
+below, using the owner of `/data/user_de/0/<pkg>`.
+
 The single quotes above are real, not editorial: every value abp
 interpolates into a device command is shell-quoted at the point of use as
 well as validated beforehand. Under `su`, the whole command is quoted a
@@ -98,6 +106,11 @@ it as failed rather than extracting anyway. Unpacking into a
 root-owned directory no app UID can use, which also gets in the way when
 the app is installed later. Install the app (or restore without
 `--no-apks`) and run the restore again.
+
+System providers (contacts, SMS, ...) run inside persistent system
+processes that `am force-stop` does not stop. When a restore included any
+system app's data, `abp` tells you to reboot the device so those
+services reload their databases.
 
 If step 1's checksum does not match, that package is skipped entirely
 and recorded as failed — a truncated or corrupted archive is never

@@ -34,6 +34,18 @@ private:
     /// detected root method (a no-op if adbd itself is already root).
     std::string asRoot(const std::string& command) const;
 
+    /// Tars `parent/packageName` into `localPath`. Returns true if a
+    /// non-empty archive was written; `*failed` is set when the directory
+    /// existed but could not be captured.
+    bool captureTree(const AdbClient& adb, const std::string& parent, const std::string& packageName,
+                     const std::filesystem::path& localPath, bool* failed) const;
+
+    /// Extracts `archivePath` under `parent` and fixes ownership/SELinux
+    /// labels of `parent/packageName`. Returns "" on success, "missing" if
+    /// that directory does not exist (package not installed), or "extract".
+    std::string restoreTree(const AdbClient& adb, const std::string& parent, const std::string& packageName,
+                            const std::filesystem::path& archivePath) const;
+
     RootAccess rootAccess_;
 };
 

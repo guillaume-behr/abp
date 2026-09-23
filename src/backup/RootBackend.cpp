@@ -20,6 +20,41 @@ std::string RootBackend::asRoot(const std::string& command) const {
     return command; // AdbdRoot: the shell is already root.
 }
 
+namespace {
+
+/// The two per-user roots an app's private data lives under. /data/data is
+/// credential-encrypted storage (a symlink to /data/user/0); /data/user_de/0
+/// is device-protected storage, readable before the phone is unlocked, where
+/// e.g. the telephony provider keeps the SMS/MMS database.
+constexpr const char* kCeRoot = "/data/data";
+constexpr const char* kDeRoot = "/data/user_de/0";
+
+} // namespace
+
+bool RootBackend::captureTree(const AdbClient& adb, const std::string& parent, const std::string& packageName,
+                              const fs::path& localPath, bool* failed) const {
+    *failed = false;
+    const std::string dirArg = strutil::shellQuote(parent + "/" + packageName);
+
+    bool checkOk = false;
+    std::string exists = adb.shellText(asRoot("[ -d " + dirArg + " ] && echo yes || echo no"), &checkOk);
+    if (!checkOk || exists != "yes") return false; // Nothing there to capture.
+
+    std::string tarCmd =
+        asRoot("tar -czf - -C " + strutil::shellQuote(parent) + " " + strutil::shellQuote(packageName) + " 2>/dev/null");
+    std::error_code ec;
+    if (!adb.execOutToFile(tarCmd, localPath.string())) {
+        *failed = true;
+        fs::remove(localPath, ec);
+        return false;
+    }
+    if (fsutil::fileSize(localPath) == 0) {
+        fs::remove(localPath, ec);
+        return false;
+    }
+    return true;
+}
+
 void RootBackend::backupAppData(const AdbClient& adb, const fs::path& outDir,
                                  const std::vector<PackageInfo>& packages, Manifest& manifest) {
     fs::path dataDir = outDir / "data";
@@ -34,46 +69,69 @@ void RootBackend::backupAppData(const AdbClient& adb, const fs::path& outDir,
             continue;
         }
 
-        const std::string dataDirArg = strutil::shellQuote("/data/data/" + pkg.name);
+        const std::string safeName = fsutil::sanitizeForFilename(pkg.name);
 
-        bool checkOk = false;
-        std::string exists =
-            adb.shellText(asRoot("[ -d " + dataDirArg + " ] && echo yes || echo no"), &checkOk);
-        if (!checkOk || exists != "yes") {
-            continue; // No private data directory; nothing to capture.
+        const std::string ceName = safeName + ".tar.gz";
+        bool ceFailed = false;
+        if (captureTree(adb, kCeRoot, pkg.name, dataDir / ceName, &ceFailed)) {
+            entry->dataArchive = (fs::path("data") / ceName).generic_string();
+            entry->dataArchiveBytes = fsutil::fileSize(dataDir / ceName);
+            entry->dataArchiveSha256 = integrity::checksumOrEmpty(dataDir / ceName);
         }
 
-        std::string fileName = fsutil::sanitizeForFilename(pkg.name) + ".tar.gz";
-        fs::path localPath = dataDir / fileName;
-
-        std::string tarCmd =
-            asRoot("tar -czf - -C /data/data " + strutil::shellQuote(pkg.name) + " 2>/dev/null");
-        if (!adb.execOutToFile(tarCmd, localPath.string())) {
-            entry->error = "failed to capture app data via tar";
-            std::error_code ec;
-            fs::remove(localPath, ec);
-            continue;
+        const std::string deName = safeName + ".de.tar.gz";
+        bool deFailed = false;
+        if (captureTree(adb, kDeRoot, pkg.name, dataDir / deName, &deFailed)) {
+            entry->deDataArchive = (fs::path("data") / deName).generic_string();
+            entry->deDataArchiveBytes = fsutil::fileSize(dataDir / deName);
+            entry->deDataArchiveSha256 = integrity::checksumOrEmpty(dataDir / deName);
         }
 
-        unsigned long long size = fsutil::fileSize(localPath);
-        if (size == 0) {
-            std::error_code ec;
-            fs::remove(localPath, ec);
-            continue;
+        if (ceFailed || deFailed) {
+            entry->error = std::string("failed to capture ") +
+                           (ceFailed && deFailed ? "app data" : ceFailed ? "app data (/data/data)"
+                                                                         : "device-protected data (/data/user_de)") +
+                           " via tar";
         }
-
-        entry->dataIncluded = true;
-        entry->dataCaptureMethod = DataCaptureMethod::RootTar;
-        entry->dataArchive = (fs::path("data") / fileName).generic_string();
-        entry->dataArchiveBytes = size;
-        entry->dataArchiveSha256 = integrity::checksumOrEmpty(localPath);
+        if (!entry->dataArchive.empty() || !entry->deDataArchive.empty()) {
+            entry->dataIncluded = true;
+            entry->dataCaptureMethod = DataCaptureMethod::RootTar;
+        }
     }
+}
+
+std::string RootBackend::restoreTree(const AdbClient& adb, const std::string& parent, const std::string& packageName,
+                                     const fs::path& archivePath) const {
+    const std::string dirArg = strutil::shellQuote(parent + "/" + packageName);
+
+    // Snapshot the UID/GID the package manager assigned to this (freshly
+    // (re)installed) app before its directory is overwritten with the
+    // archive's original ownership.
+    bool statOk = false;
+    std::string owner = adb.shellText(asRoot("stat -c '%u:%g' " + dirArg + " 2>/dev/null"), &statOk);
+
+    // No directory means the package is not installed (its APK was not
+    // restored, or failed to install). Extracting anyway would leave a
+    // root-owned directory that no app UID can use, and that the package
+    // manager then trips over when the app is installed later.
+    if (!statOk || owner.empty() || owner.find(':') == std::string::npos) {
+        return "missing";
+    }
+
+    std::string extractCmd = asRoot("tar -xzf - -C " + strutil::shellQuote(parent) + " 2>/dev/null");
+    if (!adb.shellFromFile(extractCmd, archivePath.string())) return "extract";
+
+    adb.shell(asRoot("chown -R " + strutil::shellQuote(owner) + " " + dirArg + " 2>/dev/null"));
+    adb.shell(asRoot("restorecon -R " + dirArg + " 2>/dev/null"));
+    return std::string();
 }
 
 void RootBackend::restoreAppData(const AdbClient& adb, const fs::path& backupDir, Manifest& manifest,
                                   const std::vector<std::string>& packageFilter) {
+    bool restoredSystemApp = false;
+
     for (auto& entry : manifest.packages) {
-        if (!entry.dataIncluded || entry.dataArchive.empty()) continue;
+        if (!entry.dataIncluded || (entry.dataArchive.empty() && entry.deDataArchive.empty())) continue;
         if (!packageFilter.empty() &&
             std::find(packageFilter.begin(), packageFilter.end(), entry.name) == packageFilter.end()) {
             continue;
@@ -83,50 +141,71 @@ void RootBackend::restoreAppData(const AdbClient& adb, const fs::path& backupDir
             continue;
         }
 
-        fs::path archivePath = backupDir / entry.dataArchive;
-        if (!fs::exists(archivePath)) {
-            entry.error = "data archive missing on disk: " + entry.dataArchive;
-            continue;
+        // Verify every archive before touching the device, so a corrupted
+        // half never leaves the app with only the other half restored.
+        bool verified = true;
+        for (const std::string* archive : {&entry.dataArchive, &entry.deDataArchive}) {
+            if (archive->empty()) continue;
+            const fs::path path = backupDir / *archive;
+            const std::string& expected = archive == &entry.dataArchive ? entry.dataArchiveSha256
+                                                                        : entry.deDataArchiveSha256;
+            if (!fs::exists(path)) {
+                entry.error = "data archive missing on disk: " + *archive;
+                verified = false;
+                break;
+            }
+            if (!integrity::checksumMatches(path, expected)) {
+                entry.error = "checksum mismatch for " + *archive + ", refusing to restore";
+                verified = false;
+                break;
+            }
         }
-
-        if (!integrity::checksumMatches(archivePath, entry.dataArchiveSha256)) {
-            entry.error = "checksum mismatch for data archive, refusing to restore";
-            continue;
-        }
+        if (!verified) continue;
 
         // Stop the app first: extracting over the data directory of a running
         // process leaves it with a half-old, half-new view of its own files,
         // and anything it writes afterwards can clobber the restore.
-        const std::string packageArg = strutil::shellQuote(entry.name);
-        const std::string dataDirArg = strutil::shellQuote("/data/data/" + entry.name);
+        adb.shell(asRoot("am force-stop " + strutil::shellQuote(entry.name) + " 2>/dev/null"));
 
-        adb.shell(asRoot("am force-stop " + packageArg + " 2>/dev/null"));
-
-        // Snapshot the UID/GID the package manager just assigned to this
-        // (freshly (re)installed, empty) app before we overwrite its data
-        // directory with the archive's original ownership.
-        bool statOk = false;
-        std::string owner =
-            adb.shellText(asRoot("stat -c '%u:%g' " + dataDirArg + " 2>/dev/null"), &statOk);
-
-        // No data directory means the package is not installed (its APK was
-        // not restored, or failed to install). Extracting anyway would leave
-        // a root-owned /data/data/<pkg> that no app UID can use, and that the
-        // package manager then trips over when the app is installed later.
-        if (!statOk || owner.empty() || owner.find(':') == std::string::npos) {
-            entry.error = "app is not installed on the device, so its data cannot be restored "
-                          "(restore its APK too, or install it first)";
-            continue;
+        if (!entry.dataArchive.empty()) {
+            const std::string failure = restoreTree(adb, kCeRoot, entry.name, backupDir / entry.dataArchive);
+            if (failure == "missing") {
+                entry.error = "app is not installed on the device, so its data cannot be restored "
+                              "(restore its APK too, or install it first)";
+                continue;
+            }
+            if (!failure.empty()) {
+                entry.error = "failed to extract app data archive on device";
+                continue;
+            }
         }
 
-        std::string extractCmd = asRoot("tar -xzf - -C /data/data 2>/dev/null");
-        if (!adb.shellFromFile(extractCmd, archivePath.string())) {
-            entry.error = "failed to extract app data archive on device";
-            continue;
+        if (!entry.deDataArchive.empty()) {
+            const std::string failure = restoreTree(adb, kDeRoot, entry.name, backupDir / entry.deDataArchive);
+            if (failure == "missing") {
+                entry.error = entry.dataArchive.empty()
+                                  ? "app is not installed on the device, so its data cannot be restored "
+                                    "(restore its APK too, or install it first)"
+                                  : "device-protected data not restored: " + std::string(kDeRoot) + "/" +
+                                        entry.name + " does not exist on the device";
+                continue;
+            }
+            if (!failure.empty()) {
+                entry.error = "failed to extract device-protected data archive on device";
+                continue;
+            }
         }
 
-        adb.shell(asRoot("chown -R " + strutil::shellQuote(owner) + " " + dataDirArg + " 2>/dev/null"));
-        adb.shell(asRoot("restorecon -R " + dataDirArg + " 2>/dev/null"));
+        if (entry.isSystemApp) restoredSystemApp = true;
+    }
+
+    // System providers (contacts, SMS, ...) run inside persistent system
+    // processes that `am force-stop` does not stop, and they keep their
+    // databases open. They only reliably pick up restored files after a
+    // restart of those processes.
+    if (restoredSystemApp) {
+        Logger::warn("Data of system apps was restored. Reboot the device (adb reboot) before using it, so "
+                     "system services such as contacts and SMS reload their databases.");
     }
 }
 

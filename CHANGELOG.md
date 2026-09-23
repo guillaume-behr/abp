@@ -78,6 +78,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   shape. An unrecognised method from a future abp reads as `none`
   rather than being mistaken for one this build can restore.
 
+- **Contacts, SMS and call log are exported on every backup, with or
+  without root**: `personal/contacts.vcf` (the phone's own vCard export,
+  or one built from the contacts data when the device cannot stream it),
+  `personal/sms.json` and `personal/call_log.json`, read through
+  `adb shell content`. A provider the device will not share is skipped
+  with the reason. `abp restore` copies `contacts.vcf` to the device's
+  Download folder for import; SMS and call log are archival, since only
+  the default SMS app may write messages. `--no-personal` turns both off;
+  the GUI has matching toggles and shows the exports when exploring.
+- **Root mode captures device-protected app data**
+  (`/data/user_de/0/<pkg>`, as `data/<pkg>.de.tar.gz`) and restores it
+  with its own owner. That is where Android keeps the SMS database since
+  Android 7, so `--system` root backups previously missed messages
+  entirely. abp asks for a reboot after restoring system apps' data.
+- Manifest format version 4 (`de_data_archive*` per package,
+  `personal_data_exports`). Versions 1-3 still load.
 - The GUI's **Back up** view can also pull every device partition
   (`--all-files`), and the API accepts `all_files` / `pull_paths`. The
   **Explore** view shows how each package's data was captured and lists

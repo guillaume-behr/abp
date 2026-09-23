@@ -10,8 +10,10 @@ inline constexpr int kVersionPatch = @PROJECT_VERSION_PATCH@;
 /// archives: an abp that only understands version 1 would silently skip that
 /// data on restore, having no notion of per-package archives outside root
 /// mode. Bumped to 3 for `filesystem_captures` (see --all-files), which an
-/// older abp would not report as part of the backup at all. Versions 1 and 2
-/// are still read.
-inline constexpr int kManifestFormatVersion = 3;
+/// older abp would not report as part of the backup at all. Bumped to 4 for
+/// per-package device-protected archives (`de_data_archive`, which an older
+/// abp would skip on restore -- losing SMS, among others) and
+/// `personal_data_exports`. Versions 1-3 are still read.
+inline constexpr int kManifestFormatVersion = 4;
 
 } // namespace abp

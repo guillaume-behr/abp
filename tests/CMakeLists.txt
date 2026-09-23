@@ -12,6 +12,7 @@ add_executable(abp_tests
     test_standard_backend.cpp
     test_devicepaths.cpp
     test_backup_flow.cpp
+    test_personal_data.cpp
 )
 
 target_link_libraries(abp_tests PRIVATE abp_core)

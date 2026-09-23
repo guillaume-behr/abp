@@ -42,6 +42,7 @@ Backup options:
       --no-apks           Skip extracting APK files.
       --no-data           Skip app data (root: per-app tar; standard: legacy adb backup).
       --no-shared         Skip /sdcard (shared storage / media).
+      --no-personal       Skip exporting contacts (vCard), SMS and call log (JSON).
       --only PKGS         Comma-separated package names to include, all others excluded.
       --exclude PKGS      Comma-separated package names to exclude.
       --root              Require root; fail if unavailable.
@@ -69,6 +70,7 @@ Restore options:
       --no-apks           Do not reinstall APKs.
       --no-data           Do not restore app data.
       --no-shared         Do not restore shared storage.
+      --no-personal       Do not copy the contacts export to the device for import.
       --only PKGS         Comma-separated package names to restore.
       --exclude PKGS      Comma-separated package names to skip.
   -y, --yes               Do not prompt for confirmation.
@@ -199,6 +201,7 @@ int cmdBackup(const std::vector<std::string>& args) {
         else if (arg == "--no-apks") options.includeApks = false;
         else if (arg == "--no-data") options.includeAppData = false;
         else if (arg == "--no-shared") options.includeSharedStorage = false;
+        else if (arg == "--no-personal") options.exportPersonalData = false;
         else if (arg == "--only") options.onlyPackages = splitCsv(value(arg.c_str()));
         else if (arg == "--exclude") options.excludePackages = splitCsv(value(arg.c_str()));
         else if (arg == "--root") options.mode = BackupMode::Root;
@@ -274,6 +277,10 @@ int cmdBackup(const std::vector<std::string>& args) {
 
     std::cout << "  Errors:          " << summary.packagesWithErrors << "\n";
     std::cout << "  Shared storage:  " << (summary.sharedStorageIncluded ? "included" : "skipped") << "\n";
+    auto exported = [](int count) { return count < 0 ? std::string("not exported") : std::to_string(count); };
+    std::cout << "  Contacts:        " << exported(summary.contactsExported) << "\n";
+    std::cout << "  SMS messages:    " << exported(summary.smsExported) << "\n";
+    std::cout << "  Call log:        " << exported(summary.callLogExported) << "\n";
     if (summary.filesystemCaptureCount > 0) {
         std::cout << "  Device paths:    " << summary.filesystemCaptureCount << " pulled";
         if (summary.filesystemPartialCount > 0) {
@@ -304,6 +311,7 @@ int cmdRestore(const std::vector<std::string>& args) {
         else if (arg == "--no-apks") options.includeApks = false;
         else if (arg == "--no-data") options.includeAppData = false;
         else if (arg == "--no-shared") options.includeSharedStorage = false;
+        else if (arg == "--no-personal") options.includePersonalData = false;
         else if (arg == "--only") options.onlyPackages = splitCsv(value(arg.c_str()));
         else if (arg == "--exclude") options.excludePackages = splitCsv(value(arg.c_str()));
         else if (arg == "-y" || arg == "--yes") options.assumeYes = true;
@@ -343,6 +351,9 @@ int cmdRestore(const std::vector<std::string>& args) {
                    << " (no APK and no data in the backup)\n";
     }
     std::cout << "  Shared storage:    " << (summary.sharedStorageRestored ? "restored" : "skipped") << "\n";
+    if (!summary.contactsImportPath.empty()) {
+        std::cout << "  Contacts:          copied to " << summary.contactsImportPath << " (import it in Contacts)\n";
+    }
     if (summary.filesystemCapturesPresent > 0) {
         std::cout << "  Device paths:      " << summary.filesystemCapturesPresent
                    << " present, not restored (copy by hand)\n";

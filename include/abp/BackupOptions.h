@@ -34,6 +34,10 @@ struct BackupOptions {
     /// but almost nothing under /data.
     std::vector<std::string> filesystemPaths;
 
+    /// Export contacts (vCard), SMS and call log (JSON) through Android's
+    /// content providers. Needs no root; see PersonalData.h.
+    bool exportPersonalData = true;
+
     BackupMode mode = BackupMode::Auto;
     bool assumeYes = false; ///< Skip interactive confirmations.
 };
@@ -45,6 +49,8 @@ struct RestoreOptions {
     bool includeApks = true;
     bool includeAppData = true;
     bool includeSharedStorage = true;
+    /// Copy the backup's contacts.vcf to the device's Download folder for import.
+    bool includePersonalData = true;
 
     std::vector<std::string> onlyPackages;
     std::vector<std::string> excludePackages;

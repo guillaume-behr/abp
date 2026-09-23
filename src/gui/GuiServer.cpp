@@ -192,9 +192,12 @@ JsonValue manifestJson(const Manifest& manifest) {
         item.set("data_included", entry.dataIncluded);
         item.set("data_capture_method", dataCaptureMethodName(entry.dataCaptureMethod));
         item.set("data_archive", entry.dataArchive);
-        item.set("data_bytes", entry.dataArchiveBytes);
-        item.set("data_size_human", strutil::formatBytes(entry.dataArchiveBytes));
+        // Both halves of the app's private data: /data/data and /data/user_de.
+        item.set("data_bytes", entry.dataArchiveBytes + entry.deDataArchiveBytes);
+        item.set("data_size_human", strutil::formatBytes(entry.dataArchiveBytes + entry.deDataArchiveBytes));
         item.set("data_sha256", entry.dataArchiveSha256);
+        item.set("de_data_archive", entry.deDataArchive);
+        item.set("de_data_bytes", entry.deDataArchiveBytes);
         item.set("external_data_included", entry.externalDataIncluded);
         item.set("external_data_archive", entry.externalDataArchive);
         item.set("external_data_bytes", entry.externalDataArchiveBytes);
@@ -216,6 +219,19 @@ JsonValue manifestJson(const Manifest& manifest) {
         captures.push_back(item);
     }
     object.set("filesystem_captures", captures);
+
+    JsonValue personal = JsonValue::makeArray();
+    for (const auto& export_ : manifest.personalDataExports) {
+        JsonValue item = JsonValue::makeObject();
+        item.set("kind", export_.kind);
+        item.set("format", export_.format);
+        item.set("local_path", export_.localPath);
+        item.set("item_count", export_.itemCount);
+        item.set("bytes", export_.bytes);
+        item.set("size_human", strutil::formatBytes(export_.bytes));
+        personal.push_back(item);
+    }
+    object.set("personal_data_exports", personal);
     return object;
 }
 
@@ -394,6 +410,9 @@ JsonValue backupSummaryResultJson(const BackupSummary& summary) {
     object.set("shared_storage_included", summary.sharedStorageIncluded);
     object.set("filesystem_capture_count", summary.filesystemCaptureCount);
     object.set("filesystem_partial_count", summary.filesystemPartialCount);
+    object.set("contacts_exported", summary.contactsExported);
+    object.set("sms_exported", summary.smsExported);
+    object.set("call_log_exported", summary.callLogExported);
     object.set("total_bytes", summary.totalBytes);
     object.set("total_size_human", strutil::formatBytes(summary.totalBytes));
     object.set("output_dir", summary.outputDir.string());
@@ -411,6 +430,7 @@ JsonValue restoreSummaryResultJson(const RestoreSummary& summary) {
     object.set("packages_skipped", summary.packagesSkipped);
     object.set("shared_storage_restored", summary.sharedStorageRestored);
     object.set("filesystem_captures_present", summary.filesystemCapturesPresent);
+    object.set("contacts_import_path", summary.contactsImportPath);
     JsonValue messages = JsonValue::makeArray();
     for (const auto& message : summary.messages) messages.push_back(message);
     object.set("messages", messages);
@@ -659,6 +679,7 @@ private:
         options.includeAppData = boolField(body, "include_data", true);
         options.includeSharedStorage = boolField(body, "include_shared", true);
         options.includeSystemApps = boolField(body, "include_system", false);
+        options.exportPersonalData = boolField(body, "include_personal", true);
         options.onlyPackages = stringArray(body.get("only"));
         options.excludePackages = stringArray(body.get("exclude"));
         options.assumeYes = true; // The browser already asked for confirmation.
@@ -699,6 +720,7 @@ private:
         options.includeApks = boolField(body, "include_apks", true);
         options.includeAppData = boolField(body, "include_data", true);
         options.includeSharedStorage = boolField(body, "include_shared", true);
+        options.includePersonalData = boolField(body, "include_personal", true);
         options.onlyPackages = stringArray(body.get("only"));
         options.excludePackages = stringArray(body.get("exclude"));
         options.assumeYes = true;

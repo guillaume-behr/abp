@@ -53,6 +53,9 @@ JsonValue packageToJson(const PackageBackupEntry& pkg) {
     obj.set("data_archive", pkg.dataArchive);
     obj.set("data_archive_bytes", pkg.dataArchiveBytes);
     obj.set("data_archive_sha256", pkg.dataArchiveSha256);
+    obj.set("de_data_archive", pkg.deDataArchive);
+    obj.set("de_data_archive_bytes", pkg.deDataArchiveBytes);
+    obj.set("de_data_archive_sha256", pkg.deDataArchiveSha256);
 
     obj.set("external_data_included", pkg.externalDataIncluded);
     obj.set("external_data_archive", pkg.externalDataArchive);
@@ -76,6 +79,9 @@ PackageBackupEntry packageFromJson(const JsonValue& obj, const std::string& mani
     pkg.dataArchive = obj.get("data_archive").asString();
     pkg.dataArchiveBytes = static_cast<unsigned long long>(obj.get("data_archive_bytes").asInt());
     pkg.dataArchiveSha256 = obj.get("data_archive_sha256").asString();
+    pkg.deDataArchive = obj.get("de_data_archive").asString();
+    pkg.deDataArchiveBytes = static_cast<unsigned long long>(obj.get("de_data_archive_bytes").asInt());
+    pkg.deDataArchiveSha256 = obj.get("de_data_archive_sha256").asString();
 
     pkg.externalDataIncluded = obj.get("external_data_included").asBool();
     pkg.externalDataArchive = obj.get("external_data_archive").asString();
@@ -119,6 +125,28 @@ FilesystemCapture filesystemCaptureFromJson(const JsonValue& obj) {
     return capture;
 }
 
+JsonValue personalExportToJson(const PersonalDataExport& item) {
+    JsonValue obj = JsonValue::makeObject();
+    obj.set("kind", item.kind);
+    obj.set("format", item.format);
+    obj.set("local_path", item.localPath);
+    obj.set("item_count", item.itemCount);
+    obj.set("bytes", item.bytes);
+    obj.set("sha256", item.sha256);
+    return obj;
+}
+
+PersonalDataExport personalExportFromJson(const JsonValue& obj) {
+    PersonalDataExport item;
+    item.kind = obj.get("kind").asString();
+    item.format = obj.get("format").asString();
+    item.localPath = obj.get("local_path").asString();
+    item.itemCount = static_cast<int>(obj.get("item_count").asInt());
+    item.bytes = static_cast<unsigned long long>(obj.get("bytes").asInt());
+    item.sha256 = obj.get("sha256").asString();
+    return item;
+}
+
 } // namespace
 
 const char* dataCaptureMethodName(DataCaptureMethod method) {
@@ -158,6 +186,10 @@ std::string Manifest::toJson() const {
     for (const auto& capture : filesystemCaptures) filesystemJson.push_back(filesystemCaptureToJson(capture));
     root.set("filesystem_captures", filesystemJson);
 
+    JsonValue personalJson = JsonValue::makeArray();
+    for (const auto& item : personalDataExports) personalJson.push_back(personalExportToJson(item));
+    root.set("personal_data_exports", personalJson);
+
     JsonValue packagesJson = JsonValue::makeArray();
     for (const auto& pkg : packages) packagesJson.push_back(packageToJson(pkg));
     root.set("packages", packagesJson);
@@ -196,6 +228,12 @@ Manifest Manifest::fromJson(const std::string& text) {
     for (const auto& captureJson : capturesJson.items()) {
         if (!captureJson.isObject()) continue;
         manifest.filesystemCaptures.push_back(filesystemCaptureFromJson(captureJson));
+    }
+
+    JsonValue personalJson = root.get("personal_data_exports");
+    for (const auto& itemJson : personalJson.items()) {
+        if (!itemJson.isObject()) continue;
+        manifest.personalDataExports.push_back(personalExportFromJson(itemJson));
     }
 
     JsonValue packagesJson = root.get("packages");
