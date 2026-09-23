@@ -25,6 +25,8 @@ set(ABP_CORE_SOURCES
     backup/RootBackend.cpp
     backup/BackupManager.cpp
     backup/BackupStore.cpp
+    backup/BackupExplorer.cpp
+    backup/TarArchive.cpp
     backup/PersonalData.cpp
     gui/HttpServer.cpp
     gui/GuiServer.cpp

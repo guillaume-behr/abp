@@ -3,8 +3,10 @@
 #include <arpa/inet.h>
 #include <cerrno>
 #include <csignal>
+#include <algorithm>
 #include <cstring>
 #include <fcntl.h>
+#include <fstream>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <sys/time.h>
@@ -47,7 +49,9 @@ const char* statusText(int status) {
         case 404: return "Not Found";
         case 405: return "Method Not Allowed";
         case 409: return "Conflict";
+        case 206: return "Partial Content";
         case 413: return "Payload Too Large";
+        case 416: return "Range Not Satisfiable";
         case 500: return "Internal Server Error";
         case 503: return "Service Unavailable";
         default: break;
@@ -160,9 +164,12 @@ bool readRequest(int fd, Request* request, int* errorStatus) {
 }
 
 void sendResponse(int fd, const Response& response) {
+    const bool streamed = !response.filePath.empty();
+    const unsigned long long length = streamed ? response.fileLength : response.body.size();
     std::string out = "HTTP/1.1 " + std::to_string(response.status) + " " + statusText(response.status) + "\r\n";
     out += "Content-Type: " + response.contentType + "\r\n";
-    out += "Content-Length: " + std::to_string(response.body.size()) + "\r\n";
+    out += "Content-Length: " + std::to_string(length) + "\r\n";
+    if (streamed) out += "Accept-Ranges: bytes\r\n";
     out += "Cache-Control: no-store\r\n";
     // The GUI is a local, single-origin app: nothing it serves should be
     // content-sniffed or embedded in someone else's page.
@@ -175,7 +182,47 @@ void sendResponse(int fd, const Response& response) {
     out += "\r\n";
 
     if (!writeAll(fd, out.data(), out.size())) return;
-    writeAll(fd, response.body.data(), response.body.size());
+    if (!streamed) {
+        writeAll(fd, response.body.data(), response.body.size());
+        return;
+    }
+
+    std::ifstream file(response.filePath, std::ios::binary);
+    file.seekg(static_cast<std::streamoff>(response.fileOffset));
+    std::vector<char> chunk(64 * 1024);
+    unsigned long long remaining = response.fileLength;
+    while (remaining > 0 && file) {
+        const size_t want = static_cast<size_t>(std::min<unsigned long long>(remaining, chunk.size()));
+        file.read(chunk.data(), static_cast<std::streamsize>(want));
+        const auto got = static_cast<size_t>(file.gcount());
+        if (got == 0 || !writeAll(fd, chunk.data(), got)) return;
+        remaining -= got;
+    }
+}
+
+/// Narrows a file response to the request's Range, if it has a usable one.
+void applyRange(const Request& request, Response& response) {
+    if (response.filePath.empty() || response.status != 200) return;
+    unsigned long long start = 0;
+    unsigned long long length = 0;
+    switch (parseByteRange(request.header("Range"), response.fileLength, &start, &length)) {
+        case RangeResult::None:
+            return;
+        case RangeResult::Satisfiable:
+            response.status = 206;
+            response.headers.emplace_back("Content-Range", "bytes " + std::to_string(start) + "-" +
+                                                               std::to_string(start + length - 1) + "/" +
+                                                               std::to_string(response.fileLength));
+            response.fileOffset += start;
+            response.fileLength = length;
+            return;
+        case RangeResult::Unsatisfiable:
+            response.headers.emplace_back("Content-Range", "bytes */" + std::to_string(response.fileLength));
+            response.status = 416;
+            response.filePath.clear();
+            response.body.clear();
+            return;
+    }
 }
 
 /// Marks `fd` close-on-exec. The GUI forks adb for every device operation,
@@ -285,6 +332,59 @@ Response Response::text(const std::string& body, int status) {
     return response;
 }
 
+Response Response::file(const std::string& path, unsigned long long offset, unsigned long long length,
+                        const std::string& contentType) {
+    Response response;
+    response.contentType = contentType;
+    response.filePath = path;
+    response.fileOffset = offset;
+    response.fileLength = length;
+    return response;
+}
+
+RangeResult parseByteRange(const std::string& header, unsigned long long total, unsigned long long* start,
+                           unsigned long long* length) {
+    const std::string value = strutil::trim(header);
+    if (!strutil::startsWith(value, "bytes=") || value.find(',') != std::string::npos) return RangeResult::None;
+    const std::string spec = value.substr(6);
+    const size_t dash = spec.find('-');
+    if (dash == std::string::npos) return RangeResult::None;
+
+    auto parse = [](const std::string& text, unsigned long long* out) {
+        if (text.empty() || text.find_first_not_of("0123456789") != std::string::npos) return false;
+        try {
+            *out = std::stoull(text);
+        } catch (const std::exception&) {
+            return false;
+        }
+        return true;
+    };
+
+    const std::string first = spec.substr(0, dash);
+    const std::string last = spec.substr(dash + 1);
+    unsigned long long from = 0;
+    unsigned long long to = 0;
+    if (first.empty()) {
+        // "-N": the last N bytes.
+        if (!parse(last, &to)) return RangeResult::None;
+        if (to == 0 || total == 0) return RangeResult::Unsatisfiable;
+        from = to >= total ? 0 : total - to;
+        to = total - 1;
+    } else {
+        if (!parse(first, &from)) return RangeResult::None;
+        if (last.empty()) {
+            to = total == 0 ? 0 : total - 1;
+        } else if (!parse(last, &to) || to < from) {
+            return RangeResult::None;
+        }
+        if (from >= total) return RangeResult::Unsatisfiable;
+        if (to >= total) to = total - 1;
+    }
+    *start = from;
+    *length = to - from + 1;
+    return RangeResult::Satisfiable;
+}
+
 HttpServer::~HttpServer() { stop(); }
 
 bool HttpServer::listen(const std::string& host, int port, std::string* error) {
@@ -368,6 +468,7 @@ void HttpServer::serveForever(Handler handler) {
                     Logger::debug(std::string("Request handler threw: ") + e.what());
                     response = Response::text("Internal server error", 500);
                 }
+                applyRange(request, response);
                 sendResponse(client, response);
             } else if (errorStatus != 0) {
                 sendResponse(client, Response::text(statusText(errorStatus), errorStatus));

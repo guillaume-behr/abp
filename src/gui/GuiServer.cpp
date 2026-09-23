@@ -1,6 +1,9 @@
 #include "abp/GuiServer.h"
 
+#include <unistd.h>
+
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstdlib>
 #include <fstream>
@@ -18,6 +21,7 @@
 #include "abp/AdbClient.h"
 #include "abp/BackupManager.h"
 #include "abp/BackupOptions.h"
+#include "abp/BackupExplorer.h"
 #include "abp/BackupStore.h"
 #include "abp/DevicePaths.h"
 #include "abp/HttpServer.h"
@@ -488,7 +492,13 @@ public:
 
         if (!strutil::startsWith(request.path, "/api/")) return errorResponse("Not found", 404);
 
-        if (!tokensMatch(options_.token, request.header("X-Abp-Token"))) {
+        // <img>, <video> and download links cannot send headers, so the file
+        // endpoint alone also takes the token as a query parameter.
+        std::string presented = request.header("X-Abp-Token");
+        if (presented.empty() && request.path == "/api/backup/file" && request.method == "GET") {
+            presented = request.param("token");
+        }
+        if (!tokensMatch(options_.token, presented)) {
             return errorResponse("Invalid or missing API token. Open the URL abp printed in your terminal.", 403);
         }
 
@@ -536,6 +546,9 @@ private:
         if (path == "/api/backup") return handleBackupDetail(request);
         if (path == "/api/backup/files") return handleBackupFiles(request);
         if (path == "/api/backup/verify") return handleBackupVerify(request);
+        if (path == "/api/backup/archive") return handleBackupArchive(request);
+        if (path == "/api/backup/file") return handleBackupFile(request);
+        if (path == "/api/backup/media") return handleBackupMedia(request);
         if (path == "/api/job") return handleJob(request);
 
         if (path == "/api/job/cancel") {
@@ -713,6 +726,149 @@ private:
         return jsonResponse(object);
     }
 
+    /// The backup directory named by the `path` parameter, or an empty path
+    /// (with `*error` set) if it is missing or not a backup.
+    fs::path backupParam(const http::Request& request, http::Response* error) {
+        fs::path dir = expandUserPath(request.param("path"));
+        if (dir.empty()) {
+            *error = errorResponse("Missing 'path' parameter.", 400);
+            return fs::path();
+        }
+        if (!BackupStore::isBackupDirectory(dir)) {
+            *error = errorResponse("Not an abp backup directory (no manifest.json): " + dir.string(), 404);
+            return fs::path();
+        }
+        return dir;
+    }
+
+    http::Response handleBackupArchive(const http::Request& request) {
+        http::Response error;
+        const fs::path dir = backupParam(request, &error);
+        if (dir.empty()) return error;
+        const std::string sub = request.param("sub");
+        std::string prefix = request.param("prefix");
+        if (!prefix.empty() && prefix.back() != '/') prefix += '/';
+
+        std::shared_ptr<const BackupExplorer::Archive> archive;
+        try {
+            archive = explorer_.openArchive(dir, sub);
+        } catch (const std::exception& e) {
+            return errorResponse(e.what(), 400);
+        }
+
+        JsonValue entries = JsonValue::makeArray();
+        for (const auto& child : tar::listChildren(archive->entries, prefix)) {
+            JsonValue item = JsonValue::makeObject();
+            item.set("name", child.name);
+            item.set("member", child.path);
+            item.set("directory", child.isDirectory);
+            item.set("size_bytes", child.size);
+            item.set("size_human", strutil::formatBytes(child.size));
+            item.set("mtime", child.mtime);
+            entries.push_back(item);
+        }
+        JsonValue object = JsonValue::makeObject();
+        object.set("sub", sub);
+        object.set("prefix", prefix);
+        object.set("member_count", static_cast<long long>(archive->entries.size()));
+        object.set("entries", entries);
+        return jsonResponse(object);
+    }
+
+    /// Serves one file of a backup -- or one member of an archive in it --
+    /// for previews, the gallery and downloads.
+    http::Response handleBackupFile(const http::Request& request) {
+        http::Response error;
+        const fs::path dir = backupParam(request, &error);
+        if (dir.empty()) return error;
+        const std::string sub = request.param("sub");
+        const std::string member = request.param("member");
+
+        http::Response response;
+        std::string name;
+        if (member.empty()) {
+            fs::path resolved;
+            std::error_code ec;
+            if (!BackupStore::resolveInside(dir, sub, &resolved) || !fs::is_regular_file(resolved, ec)) {
+                return errorResponse("No such file in the backup: " + sub, 404);
+            }
+            name = resolved.filename().string();
+            response = http::Response::file(resolved.string(), 0, fs::file_size(resolved, ec),
+                                            BackupExplorer::contentTypeFor(name));
+        } else {
+            std::shared_ptr<const BackupExplorer::Archive> archive;
+            try {
+                archive = explorer_.openArchive(dir, sub);
+            } catch (const std::exception& e) {
+                return errorResponse(e.what(), 400);
+            }
+            const tar::Entry* entry = archive->find(member);
+            if (entry == nullptr || entry->type != tar::Entry::Type::File) {
+                return errorResponse("No such file in the archive: " + member, 404);
+            }
+            name = member.substr(member.rfind('/') + 1);
+            response = http::Response::file(archive->tarFile.string(), entry->offset, entry->size,
+                                            BackupExplorer::contentTypeFor(name));
+        }
+
+        // Everything here came off the phone. Even served as an image or as
+        // text, it gets a sandbox so nothing in it can ever run as this page.
+        response.headers.emplace_back("Content-Security-Policy", "sandbox; default-src 'none'; img-src 'self'; "
+                                                                 "media-src 'self'; style-src 'unsafe-inline'");
+        const bool download = request.param("download") == "1" ||
+                              response.contentType == "application/octet-stream";
+        if (download) response.headers.emplace_back("Content-Disposition", contentDisposition(name));
+        return response;
+    }
+
+    http::Response handleBackupMedia(const http::Request& request) {
+        http::Response error;
+        const fs::path dir = backupParam(request, &error);
+        if (dir.empty()) return error;
+
+        std::vector<MediaItem> items;
+        try {
+            items = explorer_.media(dir);
+        } catch (const std::exception& e) {
+            return errorResponse(e.what(), 400);
+        }
+        JsonValue list = JsonValue::makeArray();
+        for (const auto& item : items) {
+            JsonValue entry = JsonValue::makeObject();
+            entry.set("name", item.name);
+            entry.set("folder", item.folder);
+            entry.set("sub", item.sub);
+            entry.set("member", item.member);
+            entry.set("kind", item.kind);
+            entry.set("size_bytes", item.size);
+            entry.set("mtime", item.mtime);
+            list.push_back(entry);
+        }
+        JsonValue object = JsonValue::makeObject();
+        object.set("items", list);
+        return jsonResponse(object);
+    }
+
+    /// `attachment` with the name made safe for a header: printable ASCII in
+    /// the plain form, the exact UTF-8 name percent-encoded alongside.
+    static std::string contentDisposition(const std::string& name) {
+        std::string plain;
+        std::string encoded;
+        static const char* kHex = "0123456789ABCDEF";
+        for (char raw : name) {
+            const auto c = static_cast<unsigned char>(raw);
+            plain.push_back(c >= 0x20 && c < 0x7F && c != '"' && c != '\\' ? static_cast<char>(c) : '_');
+            if (std::isalnum(c) || c == '.' || c == '-' || c == '_') {
+                encoded.push_back(static_cast<char>(c));
+            } else {
+                encoded += '%';
+                encoded += kHex[c >> 4];
+                encoded += kHex[c & 0x0F];
+            }
+        }
+        return "attachment; filename=\"" + plain + "\"; filename*=UTF-8''" + encoded;
+    }
+
     http::Response handleJob(const http::Request& request) {
         size_t since = 0;
         std::string sinceText = request.param("since");
@@ -813,6 +969,7 @@ private:
     GuiOptions options_;
     std::shared_ptr<http::HttpServer> server_;
     JobRunner job_;
+    BackupExplorer explorer_{fs::temp_directory_path() / ("abp-gui-" + std::to_string(::getpid()))};
 };
 
 void openInBrowser(const std::string& url) {

@@ -66,6 +66,19 @@ is resolved through `resolveInside()`, which canonicalizes the path
 (following symlinks) and refuses anything that leaves the backup
 directory.
 
+## BackupExplorer and TarArchive
+
+What the GUI's backup explorer reads through. `TarArchive` indexes an
+uncompressed tar by reading only its headers (ustar, GNU long names, pax
+overrides), recording where each member's data starts, so a photo inside
+a multi-gigabyte root-mode `shared_storage.tar` is served by seeking to
+its offset instead of extracting anything. `BackupExplorer` opens archives
+inside a backup -- decompressing `.tar.gz` app archives once into a
+per-session cache with the host's `gzip` -- caches their indexes, and
+finds a backup's photos and videos across shared storage (directory or
+tar) and SD card captures. The HTTP server streams those byte ranges from
+disk, honouring `Range` requests.
+
 ## BackupManager
 
 The only place that knows the end-to-end backup/restore *workflow*:

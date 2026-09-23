@@ -102,7 +102,10 @@ input[type=text], select {
     font: inherit;
 }
 input[type=text]:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
-button.btn {
+.btn {
+    display: inline-block;
+    text-decoration: none;
+    line-height: 1.5;
     background: var(--panel-2);
     color: var(--text);
     border: 1px solid var(--border);
@@ -111,11 +114,11 @@ button.btn {
     font: inherit;
     cursor: pointer;
 }
-button.btn:hover:not(:disabled) { border-color: var(--accent); }
-button.btn:disabled { opacity: .5; cursor: not-allowed; }
-button.btn.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
-button.btn.danger { border-color: var(--bad); color: var(--bad); }
-button.btn.small { padding: 4px 9px; font-size: 12px; }
+.btn:hover:not(:disabled) { border-color: var(--accent); }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.btn.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+.btn.danger { border-color: var(--bad); color: var(--bad); }
+.btn.small { padding: 4px 9px; font-size: 12px; }
 .toggles { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; }
 .toggle { display: flex; gap: 8px; align-items: flex-start; padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-2); cursor: pointer; }
 .toggle span.t { font-weight: 550; }
@@ -189,6 +192,59 @@ td.num, th.num { text-align: right; white-space: nowrap; }
 .banner.good { border-color: var(--good); color: var(--good); }
 .logo { display: inline-flex; align-items: center; gap: 8px; }
 .logo svg { width: 22px; height: 22px; color: var(--accent); }
+.subnav { display: flex; gap: 2px; border-bottom: 1px solid var(--border); margin: 10px 0 16px; overflow-x: auto; }
+.subnav button { background: none; border: none; border-bottom: 2px solid transparent; color: var(--muted); padding: 8px 12px; font: inherit; cursor: pointer; white-space: nowrap; }
+.subnav button:hover { color: var(--text); }
+.subnav button.active { color: var(--text); border-bottom-color: var(--accent); }
+.subnav .count { font-size: 11px; color: var(--muted); margin-left: 4px; }
+.toolbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+.toolbar input[type=text] { width: auto; flex: 1 1 220px; }
+.toolbar select { width: auto; flex: 0 1 auto; min-width: 150px; }
+.gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 6px; }
+.tile { position: relative; aspect-ratio: 1; background: var(--panel-2); border-radius: 6px; overflow: hidden; cursor: pointer; border: 1px solid var(--border); }
+.tile img, .tile video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.tile .play { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 30px; text-shadow: 0 1px 6px rgba(0,0,0,.6); pointer-events: none; }
+.tile .fallback { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 8px; text-align: center; font-size: 11px; color: var(--muted); word-break: break-all; }
+.lightbox { position: fixed; inset: 0; z-index: 30; background: #0b0c0f; display: flex; flex-direction: column; }
+.lightbox[hidden] { display: none; }
+.lb-top { display: flex; align-items: center; gap: 12px; padding: 10px 16px; color: #eee; }
+.lb-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lb-stage { flex: 1; display: flex; align-items: center; justify-content: center; min-height: 0; padding: 0 60px 20px; }
+.lb-stage img, .lb-stage video { max-width: 100%; max-height: 100%; min-width: min(320px, 100%); object-fit: contain; image-rendering: auto; }
+.lb-nav { position: absolute; top: 50%; transform: translateY(-50%); background: rgba(255,255,255,.12); color: #fff; border: none; font-size: 34px; width: 44px; height: 64px; border-radius: 8px; cursor: pointer; }
+.lb-nav:hover { background: rgba(255,255,255,.25); }
+.lb-prev { left: 10px; } .lb-next { right: 10px; }
+.split { display: grid; grid-template-columns: minmax(220px, 320px) 1fr; gap: 12px; min-height: 480px; }
+@media (max-width: 760px) { .split { grid-template-columns: 1fr; } }
+.list { border: 1px solid var(--border); border-radius: 8px; background: var(--panel); overflow: auto; max-height: 70vh; }
+.list .item { padding: 9px 12px; border-bottom: 1px solid var(--border); cursor: pointer; }
+.list .item:hover { background: var(--panel-2); }
+.list .item.active { background: var(--panel-2); box-shadow: inset 3px 0 0 var(--accent); }
+.list .item .top { display: flex; gap: 8px; justify-content: space-between; }
+.list .item .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.list .item .when { color: var(--muted); font-size: 11px; white-space: nowrap; }
+.list .item .snippet { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.thread { border: 1px solid var(--border); border-radius: 8px; background: var(--bg); overflow: auto; max-height: 70vh; padding: 12px 14px; display: flex; flex-direction: column; gap: 4px; }
+.day { align-self: center; color: var(--muted); font-size: 11px; margin: 10px 0 4px; }
+.bubble { max-width: 72%; padding: 7px 11px; border-radius: 14px; background: var(--panel-2); border: 1px solid var(--border); white-space: pre-wrap; overflow-wrap: anywhere; align-self: flex-start; }
+.bubble.out { align-self: flex-end; background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+.bubble .time { display: block; font-size: 10px; opacity: .7; margin-top: 3px; text-align: right; }
+.bubble img, .bubble video { max-width: 260px; max-height: 260px; border-radius: 8px; display: block; margin: 3px 0; cursor: pointer; }
+.bubble a { color: inherit; }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
+.person { display: flex; gap: 12px; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; }
+.avatar { width: 44px; height: 44px; border-radius: 50%; flex: none; background: var(--accent); color: var(--accent-text); display: flex; align-items: center; justify-content: center; font-weight: 700; overflow: hidden; }
+.avatar img { width: 100%; height: 100%; object-fit: cover; }
+.person .who { font-weight: 600; margin-bottom: 2px; }
+.person .line { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.month { margin: 16px 0 6px; font-weight: 650; }
+.event { display: grid; grid-template-columns: 110px 1fr; gap: 10px; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+.event .when { color: var(--muted); font-size: 12px; }
+.preview { border: 1px solid var(--border); border-radius: 8px; background: var(--panel); padding: 12px; margin-top: 12px; }
+.preview pre { max-height: 50vh; overflow: auto; background: var(--bg); padding: 10px; border-radius: 6px; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.preview img, .preview video { max-width: 100%; max-height: 60vh; display: block; }
+.linkish { background: none; border: none; color: var(--accent); cursor: pointer; font: inherit; padding: 0; text-align: left; }
+.empty { color: var(--muted); padding: 20px; text-align: center; border: 1px dashed var(--border); border-radius: 8px; }
 .device .hint-line { color: var(--muted); font-size: 12px; margin-top: 8px; }
 #job .line.warn { color: var(--warn); }
 #job .line.error { color: var(--bad); }
@@ -353,18 +409,28 @@ dialog::backdrop { background: rgba(0,0,0,.5); }
 </section>
 
 <section class="view" id="view-explore">
-    <h2>Explore backups</h2>
-    <p class="hint">Reads <span class="mono">manifest.json</span> from every backup found under a folder — no device needed.</p>
-    <div class="card">
-        <div class="row">
-            <input type="text" id="explore-root" placeholder="~/abp-backups" style="flex:1 1 320px">
-            <button class="btn" id="scan-backups">Scan</button>
-            <span class="muted" id="explore-status"></span>
+    <div id="explore-home">
+        <h2>Explore backups</h2>
+        <p class="hint">Open a backup to look through its photos, messages, contacts, calls, calendar and files — no device needed.</p>
+        <div class="card">
+            <div class="row">
+                <input type="text" id="explore-root" placeholder="~/abp-backups" style="flex:1 1 320px">
+                <button class="btn" id="scan-backups">Scan</button>
+                <span class="muted" id="explore-status"></span>
+            </div>
+            <input type="text" id="explore-filter" placeholder="Filter by name, device or date…" style="margin-top:10px">
         </div>
-        <input type="text" id="explore-filter" placeholder="Filter by name, device or date…" style="margin-top:10px">
+        <div class="grid" id="backup-list"></div>
     </div>
-    <div class="grid" id="backup-list"></div>
-    <div id="backup-detail"></div>
+    <div id="explore-detail" hidden>
+        <div class="row" style="margin-bottom:6px">
+            <button class="btn small" id="explore-back">← All backups</button>
+            <h2 id="xd-title" style="margin:0"></h2>
+            <span class="muted mono" id="xd-subtitle"></span>
+        </div>
+        <nav class="subnav" id="xd-tabs"></nav>
+        <div id="xd-body"></div>
+    </div>
 </section>
 
 </main>
@@ -390,6 +456,19 @@ dialog::backdrop { background: rgba(0,0,0,.5); }
 </div>
 
 <div class="toast" id="toast"></div>
+
+<div class="lightbox" id="lightbox" hidden>
+    <div class="lb-top">
+        <span class="lb-title" id="lb-title"></span>
+        <span class="muted" id="lb-meta"></span>
+        <span style="flex:1"></span>
+        <a class="btn small" id="lb-download" download>Download</a>
+        <button class="btn small" id="lb-close" title="Close (Esc)">Close</button>
+    </div>
+    <button class="lb-nav lb-prev" id="lb-prev" title="Previous (←)">‹</button>
+    <div class="lb-stage" id="lb-stage"></div>
+    <button class="lb-nav lb-next" id="lb-next" title="Next (→)">›</button>
+</div>
 
 <dialog id="confirm">
     <h3 id="confirm-title" style="margin-top:0"></h3>
@@ -491,7 +570,7 @@ document.querySelectorAll("nav button").forEach((button) => {
 function selectView(name) {
     document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("active", b.dataset.view === name));
     document.querySelectorAll("section.view").forEach((s) => s.classList.toggle("active", s.id === "view-" + name));
-    if (name === "explore" && state.backups.length === 0) scanBackups();
+    if (name === "explore" && state.backups.length === 0 && !explorer.path) scanBackups();
     if (name === "backup" || name === "restore") renderDeviceBanners();
 }
 
@@ -932,9 +1011,48 @@ function renderBackupList() {
     }
 }
 
+/* ------------------------------------------------------ backup explorer */
+
+// State of the backup currently open in the explorer. Anything loaded from
+// it (media index, parsed exports) is cached in `data` for its lifetime.
+const explorer = { path: "", summary: null, manifest: null, tab: "overview", data: {}, files: null };
+
+$("explore-back").addEventListener("click", closeBackup);
+
+function closeBackup() {
+    $("explore-detail").hidden = true;
+    $("explore-home").hidden = false;
+    explorer.path = "";
+}
+
+function fileUrl(sub, member, download) {
+    return "/api/backup/file?path=" + encodeURIComponent(explorer.path) + "&sub=" + encodeURIComponent(sub) +
+        (member ? "&member=" + encodeURIComponent(member) : "") + (download ? "&download=1" : "") +
+        "&token=" + encodeURIComponent(token);
+}
+
+async function fetchBackupFile(sub, asJson, range) {
+    const headers = { "X-Abp-Token": token };
+    if (range) headers.Range = range;
+    const response = await fetch(fileUrl(sub), { headers });
+    if (!response.ok && response.status !== 206) throw new Error("Could not read " + sub + " (" + response.status + ")");
+    return asJson ? response.json() : response.text();
+}
+
+function exportOf(kind) {
+    return ((explorer.manifest && explorer.manifest.personal_data_exports) || []).find((item) => item.kind === kind) || null;
+}
+
+async function loadExport(kind, asJson) {
+    const key = "export:" + kind;
+    if (!(key in explorer.data)) {
+        const item = exportOf(kind);
+        explorer.data[key] = item ? await fetchBackupFile(item.local_path, asJson) : null;
+    }
+    return explorer.data[key];
+}
+
 async function openBackup(path) {
-    const node = $("backup-detail");
-    node.textContent = "";
     let payload;
     try {
         payload = await api("/api/backup?path=" + encodeURIComponent(path));
@@ -942,24 +1060,104 @@ async function openBackup(path) {
         showError(error.message);
         return;
     }
+    explorer.path = payload.summary.path;
+    explorer.summary = payload.summary;
+    explorer.manifest = payload.manifest;
+    explorer.data = {};
+    explorer.files = { sub: "", archive: "", prefix: "" };
 
-    const manifest = payload.manifest;
-    const summary = payload.summary;
-    const card = el("div", { class: "card" });
-    card.append(el("h3", { text: summary.name }));
-    card.append(el("div", { class: "muted mono", style: "margin-bottom:10px", text: summary.path }));
+    $("explore-home").hidden = true;
+    $("explore-detail").hidden = false;
+    $("xd-title").textContent = payload.summary.name;
+    const device = payload.manifest.device || {};
+    $("xd-subtitle").textContent = [[device.manufacturer, device.model].filter(Boolean).join(" "), payload.manifest.created_at]
+        .filter(Boolean).join(" · ");
+    buildExplorerTabs();
+    showExplorerTab("overview");
+    window.scrollTo({ top: 0 });
+}
+
+function buildExplorerTabs() {
+    const manifest = explorer.manifest;
+    const count = (kind) => (exportOf(kind) || {}).item_count;
+    const hasMedia = manifest.shared_storage_included ||
+        (manifest.filesystem_captures || []).some((c) => c.device_path.startsWith("/storage/") || c.device_path.startsWith("/sdcard"));
+    const tabs = [
+        ["overview", "Overview", null],
+        hasMedia && ["photos", "Photos & videos", null],
+        (exportOf("sms") || exportOf("mms")) && ["messages", "Messages", (count("sms") || 0) + (count("mms") || 0)],
+        exportOf("contacts") && ["contacts", "Contacts", count("contacts")],
+        exportOf("call_log") && ["calls", "Calls", count("call_log")],
+        exportOf("calendar") && ["calendar", "Calendar", count("calendar")],
+        (exportOf("wifi") || exportOf("settings")) && ["device", "Wi-Fi & settings", null],
+        ["files", "Files", null],
+    ].filter(Boolean);
+    const nav = $("xd-tabs");
+    nav.textContent = "";
+    for (const [id, label, n] of tabs) {
+        const button = el("button", { "data-tab": id, onclick: () => showExplorerTab(id) }, label);
+        if (n !== null && n !== undefined) button.append(el("span", { class: "count", text: String(n) }));
+        nav.append(button);
+    }
+}
+
+async function showExplorerTab(id) {
+    explorer.tab = id;
+    document.querySelectorAll("#xd-tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === id));
+    const body = $("xd-body");
+    body.textContent = "";
+    body.append(el("div", { class: "muted" }, el("span", { class: "spinner", style: "vertical-align:-2px" }), " Loading…"));
+    const renderers = { overview: renderOverview, photos: renderPhotos, messages: renderMessages, contacts: renderContacts,
+        calls: renderCalls, calendar: renderCalendar, device: renderDeviceData, files: renderFiles };
+    try {
+        const content = await renderers[id]();
+        if (explorer.tab !== id) return; // The user moved on while this loaded.
+        body.textContent = "";
+        body.append(content);
+    } catch (error) {
+        if (explorer.tab !== id) return;
+        body.textContent = "";
+        body.append(el("div", { class: "banner bad", text: error.message }));
+    }
+}
+
+function formatDate(ms, withTime) {
+    if (!ms) return "";
+    const date = new Date(ms);
+    return withTime ? date.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
+        : date.toLocaleDateString(undefined, { dateStyle: "medium" });
+}
+
+function formatBytes(bytes) {
+    const units = ["B", "KB", "MB", "GB", "TB"];
+    let value = bytes;
+    let unit = 0;
+    while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit++; }
+    return (unit === 0 ? value : value.toFixed(1)) + " " + units[unit];
+}
+
+function emptyState(text) { return el("div", { class: "empty", text }); }
+
+/* ---- overview */
+
+async function renderOverview() {
+    const manifest = explorer.manifest;
+    const summary = explorer.summary;
+    const root = el("div");
 
     const facts = el("div", { class: "row", style: "margin-bottom:12px" });
     facts.append(el("span", { class: "badge", text: "abp " + (manifest.abp_version || "?") }));
     facts.append(el("span", { class: "badge " + (manifest.mode === "root" ? "good" : ""), text: manifest.mode + " mode" }));
-    facts.append(el("span", { class: "badge", text: manifest.created_at }));
     facts.append(el("span", { class: "badge", text: summary.disk_size_human + " on disk" }));
-    card.append(facts);
+    if (manifest.shared_storage_included) facts.append(el("span", { class: "badge", text: "shared storage " + manifest.shared_storage_size_human }));
+    for (const item of manifest.personal_data_exports || []) facts.append(el("span", { class: "badge good", text: personalLabel(item) }));
+    root.append(facts);
 
     const device = manifest.device || {};
-    card.append(el("div", { class: "muted", style: "margin-bottom:12px", text:
-        "Device: " + [device.manufacturer, device.model].filter(Boolean).join(" ") + " · " + (device.serial || "?") +
+    root.append(el("div", { class: "muted", style: "margin-bottom:12px", text:
+        "Device: " + ([device.manufacturer, device.model].filter(Boolean).join(" ") || "?") + " · " + (device.serial || "?") +
         " · Android " + (device.android_release || "?") + " (SDK " + (device.sdk_int || 0) + ")" }));
+    root.append(el("div", { class: "muted mono", style: "margin-bottom:12px;font-size:12px", text: summary.path }));
 
     const actions = el("div", { class: "row", style: "margin-bottom:14px" });
     actions.append(el("button", { class: "btn primary", onclick: () => {
@@ -990,46 +1188,51 @@ async function openBackup(path) {
         verifyButton.disabled = false;
     } });
     actions.append(verifyButton, verifyResult);
-    card.append(actions);
+    root.append(actions);
 
-    card.append(el("h3", { text: "Packages" }));
-    const scroll = el("div", { class: "scroll" });
-    const table = el("table");
-    const head = el("tr");
-    for (const column of ["Package", "APKs", "Data", "Captured via", "Status"]) head.append(el("th", { text: column }));
-    table.append(head);
-    for (const pkg of manifest.packages) {
-        const row = el("tr");
-        row.append(el("td", { class: "mono", text: pkg.name }));
-        row.append(el("td", { class: "num", text: pkg.apk_included ? String(pkg.apk_count) : "—" }));
-        // Data in the shared legacy archive has no per-package size.
-        const legacy = pkg.data_capture_method === "legacy_adb_backup";
-        row.append(el("td", { class: "num", text: pkg.data_included ? (legacy ? "in .ab" : pkg.data_size_human) : "—" }));
-        row.append(el("td", { class: "muted", text: pkg.data_included ? captureMethodLabel(pkg.data_capture_method) : "—" }));
-        let status;
-        if (pkg.error) status = el("span", { class: "err", text: pkg.error });
-        else if (pkg.data_included) status = el("span", { class: "badge good", text: "ok" });
-        else if (pkg.apk_included) status = el("span", { class: "badge", title: "The app's private data was not captured", text: "APK only" });
-        else status = el("span", { class: "badge", text: "nothing captured" });
-        row.append(el("td", {}, status));
-        table.append(row);
-    }
-    scroll.append(table);
-    card.append(scroll);
-
-    const personal = manifest.personal_data_exports || [];
-    if (personal.length > 0) {
-        card.append(el("h3", { style: "margin-top:16px", text: "Contacts & messages" }));
-        const row = el("div", { class: "row" });
-        for (const item of personal) {
-            row.append(el("span", { class: "badge good", title: item.local_path, text: personalLabel(item) + " · " + item.size_human }));
+    root.append(el("h3", { text: "Apps" }));
+    const filter = el("input", { type: "text", placeholder: "Filter apps…", style: "margin-bottom:8px" });
+    const scroll = el("div", { class: "scroll", style: "max-height:420px" });
+    const drawTable = () => {
+        const query = filter.value.trim().toLowerCase();
+        const table = el("table");
+        const head = el("tr");
+        for (const column of ["Package", "APKs", "Data", "Captured via", "Status"]) head.append(el("th", { text: column }));
+        table.append(head);
+        for (const pkg of manifest.packages) {
+            if (query && !pkg.name.toLowerCase().includes(query)) continue;
+            const row = el("tr");
+            row.append(el("td", { class: "mono", text: pkg.name }));
+            row.append(el("td", { class: "num", text: pkg.apk_included ? String(pkg.apk_count) : "—" }));
+            // Data in the shared legacy archive has no per-package size.
+            const legacy = pkg.data_capture_method === "legacy_adb_backup";
+            const dataCell = el("td", { class: "num" });
+            if (pkg.data_included && pkg.data_archive) {
+                dataCell.append(el("button", { class: "linkish", title: "Browse this app's data", text: pkg.data_size_human,
+                    onclick: () => { explorer.files = { sub: "", archive: pkg.data_archive, prefix: "" }; showExplorerTab("files"); } }));
+            } else {
+                dataCell.textContent = pkg.data_included ? (legacy ? "in .ab" : pkg.data_size_human) : "—";
+            }
+            row.append(dataCell);
+            row.append(el("td", { class: "muted", text: pkg.data_included ? captureMethodLabel(pkg.data_capture_method) : "—" }));
+            let status;
+            if (pkg.error) status = el("span", { class: "err", text: pkg.error });
+            else if (pkg.data_included) status = el("span", { class: "badge good", text: "ok" });
+            else if (pkg.apk_included) status = el("span", { class: "badge", title: "The app's private data was not captured", text: "APK only" });
+            else status = el("span", { class: "badge", text: "nothing captured" });
+            row.append(el("td", {}, status));
+            table.append(row);
         }
-        card.append(row);
-    }
+        scroll.textContent = "";
+        scroll.append(table);
+    };
+    filter.addEventListener("input", drawTable);
+    drawTable();
+    root.append(filter, scroll);
 
     const captures = manifest.filesystem_captures || [];
     if (captures.length > 0) {
-        card.append(el("h3", { style: "margin-top:16px", text: "Device paths (not restored automatically)" }));
+        root.append(el("h3", { style: "margin-top:16px", text: "Device paths (not restored automatically)" }));
         const fsTable = el("table");
         const fsHead = el("tr");
         for (const column of ["Device path", "Stored as", "Size", "Status"]) fsHead.append(el("th", { text: column }));
@@ -1037,7 +1240,8 @@ async function openBackup(path) {
         for (const capture of captures) {
             const row = el("tr");
             row.append(el("td", { class: "mono", text: capture.device_path }));
-            row.append(el("td", { class: "mono muted", text: capture.local_path }));
+            row.append(el("td", {}, el("button", { class: "linkish mono", text: capture.local_path,
+                onclick: () => { explorer.files = { sub: capture.local_path, archive: "", prefix: "" }; showExplorerTab("files"); } })));
             row.append(el("td", { class: "num", text: capture.size_human }));
             row.append(el("td", {}, capture.complete
                 ? el("span", { class: "badge good", text: "complete" })
@@ -1046,15 +1250,649 @@ async function openBackup(path) {
         }
         const fsScroll = el("div", { class: "scroll" });
         fsScroll.append(fsTable);
-        card.append(fsScroll);
+        root.append(fsScroll);
+    }
+    return root;
+}
+
+/* ---- photos & videos */
+
+function mediaUrl(item) { return fileUrl(item.sub, item.member); }
+
+async function renderPhotos() {
+    if (!explorer.data.media) {
+        explorer.data.media = (await api("/api/backup/media?path=" + encodeURIComponent(explorer.path))).items;
+    }
+    const items = explorer.data.media;
+    if (items.length === 0) return emptyState("No photos or videos in this backup's shared storage.");
+
+    const root = el("div");
+    const folders = new Map();
+    for (const item of items) folders.set(item.folder, (folders.get(item.folder) || 0) + 1);
+    const folderSelect = el("select");
+    folderSelect.append(el("option", { value: "", text: "All folders (" + items.length + ")" }));
+    for (const [folder, n] of [...folders.entries()].sort((a, b) => b[1] - a[1])) {
+        folderSelect.append(el("option", { value: folder, text: (folder || "(top level)") + " (" + n + ")" }));
+    }
+    const kindSelect = el("select");
+    for (const [value, label] of [["", "Photos and videos"], ["image", "Photos"], ["video", "Videos"]]) {
+        kindSelect.append(el("option", { value, text: label }));
+    }
+    const info = el("span", { class: "muted" });
+    root.append(el("div", { class: "toolbar" }, folderSelect, kindSelect, info));
+
+    const gallery = el("div", { class: "gallery" });
+    const more = el("button", { class: "btn", style: "margin-top:12px", text: "Show more" });
+    root.append(gallery, more);
+
+    const pageSize = 120;
+    let shown = [];
+    let rendered = 0;
+    const renderPage = () => {
+        const next = shown.slice(rendered, rendered + pageSize);
+        next.forEach((item, offset) => {
+            const index = rendered + offset;
+            const tile = el("div", { class: "tile", title: item.folder + "/" + item.name, onclick: () => openLightbox(shown, index) });
+            if (item.kind === "image") {
+                const img = el("img", { loading: "lazy", alt: item.name, src: mediaUrl(item) });
+                img.addEventListener("error", () => { img.remove(); tile.append(el("div", { class: "fallback", text: item.name })); });
+                tile.append(img);
+            } else {
+                tile.append(el("video", { preload: "metadata", muted: "", src: mediaUrl(item) + "#t=0.5" }));
+                tile.append(el("div", { class: "play", text: "▶" }));
+            }
+            gallery.append(tile);
+        });
+        rendered += next.length;
+        more.hidden = rendered >= shown.length;
+    };
+    const apply = () => {
+        shown = items.filter((item) => (!folderSelect.value || item.folder === folderSelect.value) &&
+            (!kindSelect.value || item.kind === kindSelect.value));
+        info.textContent = shown.length + " item(s)";
+        gallery.textContent = "";
+        rendered = 0;
+        renderPage();
+    };
+    folderSelect.addEventListener("change", apply);
+    kindSelect.addEventListener("change", apply);
+    more.addEventListener("click", renderPage);
+    apply();
+    return root;
+}
+
+const lightbox = { items: [], index: 0 };
+
+function openLightbox(items, index) {
+    lightbox.items = items;
+    lightbox.index = index;
+    $("lightbox").hidden = false;
+    showLightboxItem();
+}
+
+function showLightboxItem() {
+    const item = lightbox.items[lightbox.index];
+    const stage = $("lb-stage");
+    stage.textContent = "";
+    stage.append(item.kind === "video"
+        ? el("video", { src: mediaUrl(item), controls: "", autoplay: "" })
+        : el("img", { src: mediaUrl(item), alt: item.name }));
+    $("lb-title").textContent = item.name;
+    $("lb-meta").textContent = [item.folder, formatDate(item.mtime * 1000, true), formatBytes(item.size_bytes),
+        (lightbox.index + 1) + " / " + lightbox.items.length].filter(Boolean).join(" · ");
+    $("lb-download").href = fileUrl(item.sub, item.member, true);
+    $("lb-prev").hidden = lightbox.index === 0;
+    $("lb-next").hidden = lightbox.index === lightbox.items.length - 1;
+}
+
+function closeLightbox() {
+    $("lightbox").hidden = true;
+    $("lb-stage").textContent = ""; // Stops a playing video.
+}
+
+$("lb-close").addEventListener("click", closeLightbox);
+$("lb-prev").addEventListener("click", () => { if (lightbox.index > 0) { lightbox.index--; showLightboxItem(); } });
+$("lb-next").addEventListener("click", () => { if (lightbox.index < lightbox.items.length - 1) { lightbox.index++; showLightboxItem(); } });
+document.addEventListener("keydown", (event) => {
+    if ($("lightbox").hidden) return;
+    if (event.key === "Escape") closeLightbox();
+    else if (event.key === "ArrowLeft") $("lb-prev").click();
+    else if (event.key === "ArrowRight") $("lb-next").click();
+});
+
+/* ---- contacts (vCard) */
+
+function decodeQuotedPrintable(text) {
+    const bytes = [];
+    for (let i = 0; i < text.length; i++) {
+        if (text[i] === "=" && /^[0-9A-Fa-f]{2}$/.test(text.substr(i + 1, 2))) {
+            bytes.push(parseInt(text.substr(i + 1, 2), 16));
+            i += 2;
+        } else {
+            bytes.push(text.charCodeAt(i) & 0xff);
+        }
+    }
+    return new TextDecoder("utf-8").decode(new Uint8Array(bytes));
+}
+
+function unescapeVcard(value) {
+    return value.replace(/\\n/gi, "\n").replace(/\\([,;\\])/g, "$1");
+}
+
+// Parses the vCards Android exports (2.1, with QUOTED-PRINTABLE and inline
+// base64 photos) and the 3.0 ones abp builds itself.
+function parseVcards(text) {
+    const lines = [];
+    for (const raw of text.replace(/\r\n/g, "\n").split("\n")) {
+        if ((raw.startsWith(" ") || raw.startsWith("\t")) && lines.length) {
+            lines[lines.length - 1] += raw.slice(1);
+        } else if (lines.length && /ENCODING=QUOTED-PRINTABLE/i.test(lines[lines.length - 1]) && lines[lines.length - 1].endsWith("=")) {
+            lines[lines.length - 1] = lines[lines.length - 1].slice(0, -1) + raw; // QP soft line break.
+        } else {
+            lines.push(raw);
+        }
+    }
+    const contacts = [];
+    let current = null;
+    for (const line of lines) {
+        const colon = line.indexOf(":");
+        if (colon < 0) continue;
+        const head = line.slice(0, colon);
+        let value = line.slice(colon + 1);
+        const [name, ...params] = head.split(";");
+        const key = name.toUpperCase().replace(/^ITEM\d+\./, "");
+        const paramText = params.join(";").toUpperCase();
+        if (key === "BEGIN") { current = { name: "", phones: [], emails: [], addresses: [], org: "", note: "", photo: "" }; continue; }
+        if (key === "END") { if (current) contacts.push(current); current = null; continue; }
+        if (!current) continue;
+        if (paramText.includes("QUOTED-PRINTABLE")) value = decodeQuotedPrintable(value);
+        const types = params.map((p) => p.replace(/^TYPE=/i, "").toLowerCase()).filter((p) => !p.includes("=") && p !== "pref");
+        if (key === "FN") current.name = unescapeVcard(value);
+        else if (key === "N" && !current.name) current.name = unescapeVcard(value.split(";").slice(0, 2).reverse().join(" ").trim());
+        else if (key === "TEL") current.phones.push({ value: unescapeVcard(value), type: types.join(", ") });
+        else if (key === "EMAIL") current.emails.push(unescapeVcard(value));
+        else if (key === "ADR") current.addresses.push(unescapeVcard(value.split(";").filter(Boolean).join(", ")));
+        else if (key === "ORG") current.org = unescapeVcard(value.replace(/;/g, " ").trim());
+        else if (key === "NOTE") current.note = unescapeVcard(value);
+        else if (key === "PHOTO" && /BASE64|ENCODING=B/.test(paramText)) {
+            const type = (paramText.match(/TYPE=([A-Z]+)/) || [null, params.find((p) => /^(JPEG|PNG|GIF)$/i.test(p)) || "JPEG"])[1];
+            current.photo = "data:image/" + String(type).toLowerCase() + ";base64," + value.replace(/\s/g, "");
+        }
+    }
+    return contacts.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+async function loadContacts() {
+    if (!explorer.data.contacts) {
+        const text = await loadExport("contacts", false);
+        explorer.data.contacts = text ? parseVcards(text) : [];
+    }
+    return explorer.data.contacts;
+}
+
+// Phone numbers are stored in every format imaginable; the last nine digits
+// are a practical key for matching a message's address to a contact.
+function phoneKey(number) {
+    const digits = String(number || "").replace(/\D/g, "");
+    return digits.length >= 6 ? digits.slice(-9) : "";
+}
+
+async function contactNames() {
+    if (!explorer.data.names) {
+        const names = new Map();
+        for (const contact of await loadContacts()) {
+            for (const phone of contact.phones) {
+                const key = phoneKey(phone.value);
+                if (key && !names.has(key)) names.set(key, contact.name);
+            }
+        }
+        explorer.data.names = names;
+    }
+    return explorer.data.names;
+}
+
+function initials(name) {
+    const parts = name.trim().split(/\s+/).filter((p) => /\p{L}/u.test(p));
+    return ((parts[0] || "?")[0] + (parts.length > 1 ? parts[parts.length - 1][0] : "")).toUpperCase();
+}
+
+async function renderContacts() {
+    const contacts = await loadContacts();
+    if (contacts.length === 0) return emptyState("The contacts export is empty.");
+    const root = el("div");
+    const search = el("input", { type: "text", placeholder: "Search contacts by name, number or email…" });
+    const info = el("span", { class: "muted" });
+    const download = el("a", { class: "btn small", href: fileUrl(exportOf("contacts").local_path, "", true), text: "Download .vcf" });
+    root.append(el("div", { class: "toolbar" }, search, info, download));
+    const grid = el("div", { class: "cards" });
+    root.append(grid);
+    const draw = () => {
+        const query = search.value.trim().toLowerCase();
+        const digits = query.replace(/\D/g, "");
+        const shown = contacts.filter((c) => !query || c.name.toLowerCase().includes(query) ||
+            c.emails.some((e) => e.toLowerCase().includes(query)) ||
+            (digits.length >= 3 && c.phones.some((p) => p.value.replace(/\D/g, "").includes(digits))));
+        info.textContent = shown.length + " of " + contacts.length;
+        grid.textContent = "";
+        for (const contact of shown.slice(0, 500)) {
+            const avatar = el("div", { class: "avatar" });
+            if (contact.photo) avatar.append(el("img", { src: contact.photo, alt: "" }));
+            else avatar.textContent = initials(contact.name || "?");
+            const details = el("div", { style: "min-width:0" }, el("div", { class: "who", text: contact.name || "(no name)" }));
+            if (contact.org) details.append(el("div", { class: "line", text: contact.org }));
+            for (const phone of contact.phones) details.append(el("div", { class: "line", text: phone.value + (phone.type ? " · " + phone.type : "") }));
+            for (const email of contact.emails) details.append(el("div", { class: "line", text: email }));
+            for (const address of contact.addresses) details.append(el("div", { class: "line", text: address }));
+            if (contact.note) details.append(el("div", { class: "line", text: contact.note }));
+            grid.append(el("div", { class: "person" }, avatar, details));
+        }
+        if (shown.length > 500) grid.append(el("div", { class: "muted", text: "Showing the first 500; search to narrow it down." }));
+    };
+    search.addEventListener("input", draw);
+    draw();
+    return root;
+}
+
+/* ---- messages */
+
+async function loadConversations() {
+    if (explorer.data.conversations) return explorer.data.conversations;
+    const sms = (await loadExport("sms", true)) || { messages: [] };
+    const mms = (await loadExport("mms", true)) || { messages: [] };
+    const names = await contactNames();
+    const byThread = new Map();
+    const thread = (id) => {
+        if (!byThread.has(id)) byThread.set(id, { id, addresses: new Set(), messages: [] });
+        return byThread.get(id);
+    };
+    for (const message of sms.messages || []) {
+        const t = thread("t" + message.thread_id);
+        if (message.address) t.addresses.add(message.address);
+        t.messages.push({ date: message.date, out: message.type !== "inbox", text: message.body, parts: [],
+            address: message.address, status: message.type });
+    }
+    for (const message of mms.messages || []) {
+        const t = thread("t" + message.thread_id);
+        for (const address of message.participants || []) t.addresses.add(address);
+        const texts = (message.parts || []).filter((p) => p.text !== undefined).map((p) => p.text);
+        t.messages.push({ date: message.date, out: message.box !== "inbox", text: [message.subject, ...texts].filter(Boolean).join("\n"),
+            parts: (message.parts || []).filter((p) => p.file), address: "", status: message.box });
+    }
+    const conversations = [...byThread.values()].map((t) => {
+        t.messages.sort((a, b) => a.date - b.date);
+        const people = [...t.addresses].map((a) => names.get(phoneKey(a)) || a);
+        t.title = people.join(", ") || "(unknown)";
+        t.search = (t.title + " " + [...t.addresses].join(" ")).toLowerCase();
+        t.last = t.messages[t.messages.length - 1];
+        return t;
+    }).sort((a, b) => (b.last ? b.last.date : 0) - (a.last ? a.last.date : 0));
+    explorer.data.conversations = conversations;
+    return conversations;
+}
+
+async function renderMessages() {
+    const conversations = await loadConversations();
+    if (conversations.length === 0) return emptyState("No messages in this backup.");
+    const root = el("div");
+    const search = el("input", { type: "text", placeholder: "Search conversations and message text…" });
+    const info = el("span", { class: "muted" });
+    root.append(el("div", { class: "toolbar" }, search, info));
+    const list = el("div", { class: "list" });
+    const pane = el("div", { class: "thread" }, emptyState("Pick a conversation."));
+    root.append(el("div", { class: "split" }, list, pane));
+    let active = null;
+
+    const open = (conversation, query) => {
+        active = conversation;
+        list.querySelectorAll(".item").forEach((node) => node.classList.toggle("active", node.dataset.id === conversation.id));
+        pane.textContent = "";
+        pane.append(el("div", { style: "font-weight:650;margin-bottom:4px", text: conversation.title }));
+        const all = conversation.messages;
+        let start = Math.max(0, all.length - 300);
+        const draw = () => {
+            pane.querySelectorAll(".msg, .day, .earlier").forEach((node) => node.remove());
+            if (start > 0) {
+                pane.append(el("button", { class: "btn small earlier", style: "align-self:center", text: "Show " + Math.min(300, start) + " earlier",
+                    onclick: () => { start = Math.max(0, start - 300); draw(); } }));
+            }
+            let lastDay = "";
+            for (const message of all.slice(start)) {
+                const day = formatDate(message.date, false);
+                if (day !== lastDay) { pane.append(el("div", { class: "day", text: day })); lastDay = day; }
+                const bubble = el("div", { class: "bubble msg" + (message.out ? " out" : "") });
+                if (query && message.text && message.text.toLowerCase().includes(query)) bubble.style.outline = "2px solid var(--warn)";
+                for (const part of message.parts) {
+                    const url = fileUrl("personal/" + part.file);
+                    if (/^image\//.test(part.content_type)) bubble.append(el("img", { src: url, alt: part.name || "", loading: "lazy",
+                        onclick: () => window.open(url, "_blank", "noopener") }));
+                    else if (/^video\//.test(part.content_type)) bubble.append(el("video", { src: url, controls: "", preload: "metadata" }));
+                    else bubble.append(el("a", { href: fileUrl("personal/" + part.file, "", true), text: "📎 " + (part.name || part.file) }));
+                }
+                if (message.text) bubble.append(document.createTextNode(message.text));
+                bubble.append(el("span", { class: "time", text: new Date(message.date).toLocaleTimeString(undefined, { timeStyle: "short" }) +
+                    (message.status === "draft" ? " · draft" : message.status === "failed" ? " · failed" : "") }));
+                pane.append(bubble);
+            }
+        };
+        draw();
+        pane.scrollTop = pane.scrollHeight;
+    };
+
+    const draw = () => {
+        const query = search.value.trim().toLowerCase();
+        const shown = conversations.filter((c) => !query || c.search.includes(query) ||
+            c.messages.some((m) => m.text && m.text.toLowerCase().includes(query)));
+        const total = conversations.reduce((n, c) => n + c.messages.length, 0);
+        info.textContent = shown.length + " conversation(s) · " + total + " message(s)";
+        list.textContent = "";
+        for (const conversation of shown) {
+            const last = conversation.last || {};
+            const item = el("div", { class: "item" + (active === conversation ? " active" : ""), "data-id": conversation.id,
+                onclick: () => open(conversation, query) },
+                el("div", { class: "top" }, el("span", { class: "name", text: conversation.title }), el("span", { class: "when", text: formatDate(last.date, false) })),
+                el("div", { class: "snippet", text: (last.out ? "You: " : "") + (last.text || (last.parts && last.parts.length ? "📎 attachment" : "")) }));
+            list.append(item);
+        }
+        if (shown.length === 0) list.append(el("div", { class: "muted", style: "padding:12px", text: "No conversation matches." }));
+    };
+    search.addEventListener("input", draw);
+    draw();
+    if (conversations.length) open(conversations[0], "");
+    return root;
+}
+
+/* ---- calls */
+
+async function renderCalls() {
+    const data = (await loadExport("call_log", true)) || { calls: [] };
+    const calls = (data.calls || []).slice().sort((a, b) => b.date - a.date);
+    if (calls.length === 0) return emptyState("The call log is empty.");
+    const names = await contactNames();
+    const root = el("div");
+    const search = el("input", { type: "text", placeholder: "Search by name or number…" });
+    const type = el("select");
+    for (const [value, label] of [["", "All calls"], ["incoming", "Incoming"], ["outgoing", "Outgoing"], ["missed", "Missed"],
+        ["rejected", "Rejected"], ["blocked", "Blocked"], ["voicemail", "Voicemail"]]) type.append(el("option", { value, text: label }));
+    const info = el("span", { class: "muted" });
+    root.append(el("div", { class: "toolbar" }, search, type, info));
+    const scroll = el("div", { class: "scroll", style: "max-height:70vh" });
+    root.append(scroll);
+    const icons = { incoming: "↙", outgoing: "↗", missed: "✕", rejected: "⊘", blocked: "⊘", voicemail: "✉" };
+    const draw = () => {
+        const query = search.value.trim().toLowerCase();
+        const shown = calls.filter((call) => (!type.value || call.type === type.value) && (!query ||
+            (call.name || names.get(phoneKey(call.number)) || "").toLowerCase().includes(query) || String(call.number).includes(query)));
+        info.textContent = shown.length + " call(s)";
+        const table = el("table");
+        const head = el("tr");
+        for (const column of ["", "Who", "Number", "When", "Duration"]) head.append(el("th", { text: column }));
+        table.append(head);
+        for (const call of shown.slice(0, 2000)) {
+            const row = el("tr");
+            row.append(el("td", { class: call.type === "missed" ? "err" : "muted", title: call.type, text: icons[call.type] || "·" }));
+            row.append(el("td", { text: call.name || names.get(phoneKey(call.number)) || "—" }));
+            row.append(el("td", { class: "mono", text: call.number || "(private)" }));
+            row.append(el("td", { text: formatDate(call.date, true) }));
+            const d = call.duration_seconds || 0;
+            row.append(el("td", { class: "num", text: d ? Math.floor(d / 60) + ":" + String(d % 60).padStart(2, "0") : "—" }));
+            table.append(row);
+        }
+        scroll.textContent = "";
+        scroll.append(table);
+    };
+    search.addEventListener("input", draw);
+    type.addEventListener("change", draw);
+    draw();
+    return root;
+}
+
+/* ---- calendar (iCalendar) */
+
+function parseIcsDate(value, params) {
+    const m = /^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})(Z)?)?$/.exec(value || "");
+    if (!m) return null;
+    const allDay = /VALUE=DATE(?!-)/i.test(params) || !m[4];
+    if (allDay) return { date: new Date(+m[1], +m[2] - 1, +m[3]), allDay: true };
+    const parts = [+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]];
+    return { date: m[7] ? new Date(Date.UTC(...parts)) : new Date(...parts), allDay: false };
+}
+
+function parseIcs(text) {
+    const lines = [];
+    for (const raw of text.replace(/\r\n/g, "\n").split("\n")) {
+        if ((raw.startsWith(" ") || raw.startsWith("\t")) && lines.length) lines[lines.length - 1] += raw.slice(1);
+        else lines.push(raw);
+    }
+    const events = [];
+    let current = null;
+    for (const line of lines) {
+        if (line === "BEGIN:VEVENT") { current = {}; continue; }
+        if (line === "END:VEVENT") { if (current && current.start) events.push(current); current = null; continue; }
+        if (!current) continue;
+        const colon = line.indexOf(":");
+        if (colon < 0) continue;
+        const [key, ...params] = line.slice(0, colon).split(";");
+        const value = unescapeVcard(line.slice(colon + 1));
+        if (key === "SUMMARY") current.title = value;
+        else if (key === "LOCATION") current.location = value;
+        else if (key === "DESCRIPTION") current.description = value;
+        else if (key === "CATEGORIES") current.calendar = value;
+        else if (key === "RRULE") current.repeats = true;
+        else if (key === "DTSTART") current.start = parseIcsDate(line.slice(colon + 1), params.join(";"));
+        else if (key === "DTEND") current.end = parseIcsDate(line.slice(colon + 1), params.join(";"));
+    }
+    return events.sort((a, b) => b.start.date - a.start.date);
+}
+
+async function renderCalendar() {
+    if (!explorer.data.events) {
+        const text = await loadExport("calendar", false);
+        explorer.data.events = text ? parseIcs(text) : [];
+    }
+    const events = explorer.data.events;
+    if (events.length === 0) return emptyState("The calendar export has no events.");
+    const root = el("div");
+    const search = el("input", { type: "text", placeholder: "Search events…" });
+    const when = el("select");
+    for (const [value, label] of [["all", "All events"], ["upcoming", "Upcoming"], ["past", "Past"]]) when.append(el("option", { value, text: label }));
+    const info = el("span", { class: "muted" });
+    const download = el("a", { class: "btn small", href: fileUrl(exportOf("calendar").local_path, "", true), text: "Download .ics" });
+    root.append(el("div", { class: "toolbar" }, search, when, info, download));
+    const listNode = el("div", { class: "card", style: "padding:6px 12px" });
+    root.append(listNode);
+    const draw = () => {
+        const query = search.value.trim().toLowerCase();
+        const now = new Date();
+        let shown = events.filter((e) => (!query || [e.title, e.location, e.description, e.calendar].join(" ").toLowerCase().includes(query)) &&
+            (when.value === "all" || (when.value === "upcoming" ? e.start.date >= now : e.start.date < now)));
+        if (when.value === "upcoming") shown = shown.slice().reverse();
+        info.textContent = shown.length + " event(s)";
+        listNode.textContent = "";
+        let lastMonth = "";
+        for (const event of shown.slice(0, 1500)) {
+            const month = event.start.date.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+            if (month !== lastMonth) { listNode.append(el("div", { class: "month", text: month })); lastMonth = month; }
+            const time = event.start.allDay ? "All day" : event.start.date.toLocaleTimeString(undefined, { timeStyle: "short" });
+            const detail = el("div", {}, el("div", { style: "font-weight:600", text: (event.title || "(no title)") + (event.repeats ? " ↻" : "") }));
+            const meta = [event.location, event.calendar].filter(Boolean).join(" · ");
+            if (meta) detail.append(el("div", { class: "muted", style: "font-size:12px", text: meta }));
+            if (event.description) detail.append(el("div", { style: "font-size:12px;white-space:pre-wrap", text: event.description }));
+            listNode.append(el("div", { class: "event" },
+                el("div", { class: "when" }, el("div", { text: event.start.date.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" }) }), el("div", { text: time })),
+                detail));
+        }
+        if (shown.length === 0) listNode.append(el("div", { class: "muted", style: "padding:12px", text: "No event matches." }));
+    };
+    search.addEventListener("input", draw);
+    when.addEventListener("change", draw);
+    draw();
+    return root;
+}
+
+/* ---- Wi-Fi & settings */
+
+async function renderDeviceData() {
+    const root = el("div");
+    const wifi = await loadExport("wifi", true);
+    if (wifi) {
+        root.append(el("h3", { text: "Wi-Fi networks" }));
+        const table = el("table");
+        const head = el("tr");
+        for (const column of ["Network", "Security", "Password"]) head.append(el("th", { text: column }));
+        table.append(head);
+        for (const network of wifi.networks || []) {
+            const row = el("tr");
+            row.append(el("td", { text: network.ssid + (network.hidden ? " (hidden)" : "") }));
+            row.append(el("td", { class: "muted", text: network.security }));
+            const cell = el("td", { class: "mono" });
+            if (network.password) {
+                const secret = el("span", { text: "••••••••" });
+                cell.append(secret, " ", el("button", { class: "btn small", text: "Show", onclick: (event) => {
+                    const showing = secret.textContent !== "••••••••";
+                    secret.textContent = showing ? "••••••••" : network.password;
+                    event.target.textContent = showing ? "Show" : "Hide";
+                } }));
+            } else {
+                cell.append(el("span", { class: "muted", text: network.security === "open" ? "none" : "not stored in clear" }));
+            }
+            row.append(cell);
+            table.append(row);
+        }
+        const scroll = el("div", { class: "scroll", style: "margin-bottom:18px" });
+        scroll.append(table);
+        root.append(scroll);
     }
 
-    card.append(el("h3", { style: "margin-top:16px", text: "Files" }));
-    const browser = el("div");
-    card.append(browser);
-    node.append(card);
-    node.scrollIntoView({ behavior: "smooth", block: "start" });
-    browseFiles(summary.path, "", browser);
+    const settings = await loadExport("settings", true);
+    if (settings) {
+        root.append(el("h3", { text: "Settings" }));
+        const namespace = el("select");
+        for (const ns of ["system", "secure", "global"]) if (settings[ns]) namespace.append(el("option", { value: ns, text: ns }));
+        const search = el("input", { type: "text", placeholder: "Search settings…" });
+        root.append(el("div", { class: "toolbar" }, namespace, search));
+        const scroll = el("div", { class: "scroll", style: "max-height:60vh" });
+        root.append(scroll);
+        const draw = () => {
+            const values = settings[namespace.value] || {};
+            const query = search.value.trim().toLowerCase();
+            const table = el("table");
+            for (const key of Object.keys(values).sort()) {
+                if (query && !(key + " " + values[key]).toLowerCase().includes(query)) continue;
+                table.append(el("tr", {}, el("td", { class: "mono", text: key }), el("td", { class: "mono muted", text: values[key] })));
+            }
+            scroll.textContent = "";
+            scroll.append(table);
+        };
+        namespace.addEventListener("change", draw);
+        search.addEventListener("input", draw);
+        draw();
+    }
+    return root;
+}
+
+/* ---- files */
+
+function isArchiveName(name) { return /\.(tar|tar\.gz|tgz)$/i.test(name); }
+
+async function renderFiles() {
+    const state = explorer.files;
+    const root = el("div");
+    const crumbs = el("div", { class: "crumbs" });
+    root.append(crumbs);
+    const go = (next) => { explorer.files = next; showExplorerTab("files"); };
+
+    crumbs.append(el("button", { text: "backup", onclick: () => go({ sub: "", archive: "", prefix: "" }) }));
+    let walked = "";
+    for (const part of (state.archive || state.sub).split("/").filter(Boolean)) {
+        walked = walked ? walked + "/" + part : part;
+        const here = walked;
+        crumbs.append(el("span", { class: "muted", text: "/" }));
+        crumbs.append(el("button", { text: part, onclick: () => go(isArchiveName(here) ? { sub: "", archive: here, prefix: "" }
+            : { sub: here, archive: "", prefix: "" }) }));
+    }
+    if (state.archive) {
+        let inner = "";
+        for (const part of state.prefix.split("/").filter(Boolean)) {
+            inner += part + "/";
+            const here = inner;
+            crumbs.append(el("span", { class: "muted", text: "/" }));
+            crumbs.append(el("button", { text: part, onclick: () => go({ sub: "", archive: state.archive, prefix: here }) }));
+        }
+    }
+
+    let entries;
+    if (state.archive) {
+        const payload = await api("/api/backup/archive?path=" + encodeURIComponent(explorer.path) + "&sub=" +
+            encodeURIComponent(state.archive) + "&prefix=" + encodeURIComponent(state.prefix));
+        entries = payload.entries.map((e) => ({ name: e.name, directory: e.directory, size_human: e.size_human, member: e.member }));
+        root.append(el("div", { class: "muted", style: "margin-bottom:8px;font-size:12px",
+            text: "Inside archive " + state.archive + " · " + payload.member_count + " member(s)" }));
+    } else {
+        const payload = await api("/api/backup/files?path=" + encodeURIComponent(explorer.path) + "&sub=" + encodeURIComponent(state.sub || "."));
+        entries = payload.entries.map((e) => ({ name: e.name, directory: e.directory, size_human: e.size_human, path: e.path }));
+    }
+
+    const preview = el("div");
+    const scroll = el("div", { class: "scroll", style: "max-height:55vh" });
+    const table = el("table");
+    table.append(el("tr", {}, el("th", { text: "Name" }), el("th", { class: "num", text: "Size" }), el("th", { text: "" })));
+    if (entries.length === 0) table.append(el("tr", {}, el("td", { colspan: "3", class: "muted", text: "(empty)" })));
+    for (const entry of entries) {
+        const row = el("tr");
+        let nameCell;
+        if (entry.directory) {
+            nameCell = el("button", { class: "linkish", text: "📁 " + entry.name, onclick: () => go(state.archive
+                ? { sub: "", archive: state.archive, prefix: entry.member + "/" } : { sub: entry.path, archive: "", prefix: "" }) });
+        } else if (!state.archive && isArchiveName(entry.name)) {
+            nameCell = el("button", { class: "linkish", title: "Open the archive", text: "🗜 " + entry.name,
+                onclick: () => go({ sub: "", archive: entry.path, prefix: "" }) });
+        } else {
+            nameCell = el("button", { class: "linkish", text: "📄 " + entry.name,
+                onclick: () => previewFile(preview, entry.name, state.archive || entry.path, state.archive ? entry.member : "") });
+        }
+        row.append(el("td", {}, nameCell));
+        row.append(el("td", { class: "num muted", text: entry.size_human }));
+        row.append(el("td", { class: "num" }, entry.directory ? "" : el("a", { class: "btn small",
+            href: fileUrl(state.archive || entry.path, state.archive ? entry.member : "", true), text: "Download" })));
+        table.append(row);
+    }
+    scroll.append(table);
+    root.append(scroll, preview);
+    return root;
+}
+
+async function previewFile(node, name, sub, member) {
+    node.textContent = "";
+    const box = el("div", { class: "preview" });
+    const url = fileUrl(sub, member);
+    box.append(el("div", { class: "row", style: "margin-bottom:8px" }, el("strong", { text: name }), el("span", { style: "flex:1" }),
+        el("a", { class: "btn small", href: fileUrl(sub, member, true), text: "Download" })));
+    const lower = name.toLowerCase();
+    if (/\.(jpe?g|png|gif|webp|bmp|avif)$/.test(lower)) {
+        box.append(el("img", { src: url, alt: name }));
+    } else if (/\.(mp4|m4v|webm|3gp|mov|mkv)$/.test(lower)) {
+        box.append(el("video", { src: url, controls: "" }));
+    } else if (/\.(mp3|m4a|aac|ogg|opus|wav|amr|flac)$/.test(lower)) {
+        box.append(el("audio", { src: url, controls: "" }));
+    } else {
+        // Anything else is shown as text: the first 256 KB, and only if it
+        // does not look binary (a NUL byte gives a database or image away).
+        try {
+            const headers = { "X-Abp-Token": token, Range: "bytes=0-262143" };
+            const response = await fetch(url, { headers });
+            const buffer = new Uint8Array(await response.arrayBuffer());
+            if (buffer.subarray(0, 8000).includes(0)) {
+                box.append(el("div", { class: "muted", text: "Binary file — no preview. Use Download to open it with another program." }));
+            } else {
+                const text = new TextDecoder("utf-8").decode(buffer);
+                box.append(el("pre", { text: text + (buffer.length >= 262144 ? "\n… (first 256 KB shown)" : "") }));
+            }
+        } catch (error) {
+            box.append(el("div", { class: "err", text: error.message }));
+        }
+    }
+    node.append(box);
+    box.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
 function personalLabel(item) {
@@ -1070,51 +1908,6 @@ function captureMethodLabel(method) {
         case "legacy_adb_backup": return "adb backup";
         default: return "—";
     }
-}
-
-async function browseFiles(backupPath, sub, container) {
-    let payload;
-    try {
-        payload = await api("/api/backup/files?path=" + encodeURIComponent(backupPath) + "&sub=" + encodeURIComponent(sub || "."));
-    } catch (error) {
-        showError(error.message);
-        return;
-    }
-    container.textContent = "";
-
-    const crumbs = el("div", { class: "crumbs" });
-    crumbs.append(el("button", { text: "backup root", onclick: () => browseFiles(backupPath, "", container) }));
-    let walked = "";
-    for (const part of (payload.sub || "").split("/").filter(Boolean)) {
-        walked = walked ? walked + "/" + part : part;
-        const here = walked;
-        crumbs.append(el("span", { class: "muted", text: "/" }));
-        crumbs.append(el("button", { text: part, onclick: () => browseFiles(backupPath, here, container) }));
-    }
-    container.append(crumbs);
-
-    const scroll = el("div", { class: "scroll" });
-    const table = el("table");
-    const head = el("tr");
-    head.append(el("th", { text: "Name" }));
-    head.append(el("th", { class: "num", text: "Size" }));
-    table.append(head);
-    if (payload.entries.length === 0) {
-        const row = el("tr");
-        row.append(el("td", { colspan: "2", class: "muted", text: "(empty)" }));
-        table.append(row);
-    }
-    for (const entry of payload.entries) {
-        const row = el("tr");
-        const name = entry.directory
-            ? el("button", { class: "btn small", onclick: () => browseFiles(backupPath, entry.path, container), text: "📁 " + entry.name })
-            : el("span", { class: "mono", text: "📄 " + entry.name });
-        row.append(el("td", {}, name));
-        row.append(el("td", { class: "num muted", text: entry.size_human }));
-        table.append(row);
-    }
-    scroll.append(table);
-    container.append(scroll);
 }
 
 /* ------------------------------------------------------------------ job */

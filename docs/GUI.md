@@ -51,12 +51,28 @@ subcommands.
   `manifest.json` says was captured, tick the packages to restore, and
   go. Mirrors `abp restore`, including the warning when a root-mode
   backup is being restored onto a device without root.
-- **Explore backups** — scans a folder for directories containing a
-  `manifest.json` and lists what each one holds: device, capture date,
-  backend, per-package archive sizes and how each package's data was
-  captured (root tar, `run-as` or legacy `adb backup`), per-package
-  errors, any raw device-path captures and whether they are complete, and
-  a file browser over the backup directory itself. No device needed.
+- **Explore backups** — scans a folder for backups and opens any of them
+  in a full explorer, no device needed:
+  - **Overview**: device, date, mode, what was captured, per-app sizes and
+    capture method (click an app's data size to browse its archive),
+    raw device-path captures, *Restore this backup* and *Verify checksums*.
+  - **Photos & videos**: a gallery of every photo and video in shared
+    storage and SD card copies — including root-mode backups, where they
+    sit inside `shared_storage.tar` and are served straight out of it —
+    filterable by folder, with a full-screen viewer (arrow keys to move,
+    Esc to close) and downloads.
+  - **Messages**: SMS and MMS threaded into conversations, with contact
+    names, attachments shown inline, and search across message text.
+  - **Contacts**, **Calls** and **Calendar**: searchable views of the
+    personal data exports, with contact photos, call types and durations,
+    and events by month.
+  - **Wi-Fi & settings**: saved networks (passwords hidden until you ask)
+    and the settings tables.
+  - **Files**: the backup's directory tree with previews (images, video,
+    audio, text) and downloads. `.tar` and `.tar.gz` archives — an app's
+    private data, root-mode shared storage — open like folders.
+
+  Only the tabs a backup has data for are shown.
 
 While a backup or restore runs, a drawer at the bottom of the page shows
 a progress bar for the current step (`Backing up app data · 12/48 ·
@@ -92,6 +108,13 @@ it is locked down by default:
 - **Backup browsing is sandboxed.** The file browser resolves every path
   inside the backup directory and refuses anything that escapes it, `..`
   and symlinks included.
+- **Nothing from the phone can run in the page.** Files are served with
+  a content type chosen by abp -- HTML, SVG, XML and scripts come back as
+  plain text -- plus `X-Content-Type-Options: nosniff` and a
+  `Content-Security-Policy: sandbox` header, so a hostile file in a
+  backup cannot execute on the GUI's origin. `/api/backup/file` is the
+  one endpoint that also accepts the token as a `token` query parameter,
+  because `<img>` and `<video>` elements cannot send headers.
 
 Passing `--host 0.0.0.0` opts out of the first of those and makes the GUI
 reachable from your network; `abp` warns when you do. Anyone who can
@@ -118,6 +141,9 @@ curl -H "X-Abp-Token: $TOKEN" http://127.0.0.1:8787/api/devices
 | `GET` | `/api/backup?path=DIR` | One backup's summary and full manifest. |
 | `GET` | `/api/backup/files?path=DIR&sub=REL` | Directory listing inside a backup. |
 | `GET` | `/api/backup/verify?path=DIR` | Check every file against the manifest (as `abp verify`). |
+| `GET` | `/api/backup/media?path=DIR` | Every photo and video in the backup, newest first. |
+| `GET` | `/api/backup/archive?path=DIR&sub=ARCHIVE&prefix=P/` | One directory level inside a `.tar`/`.tar.gz` in the backup. |
+| `GET` | `/api/backup/file?path=DIR&sub=REL[&member=M][&download=1]` | One file of the backup, or member `M` of archive `REL`. Supports `Range`. |
 | `POST` | `/api/jobs/backup` | Start a backup. Body mirrors the CLI options. |
 | `POST` | `/api/jobs/restore` | Start a restore. |
 | `GET` | `/api/job?since=N` | Job state plus log lines from index `N` on. |

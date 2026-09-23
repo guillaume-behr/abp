@@ -84,6 +84,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Download folder for import; SMS and call log are archival, since only
   the default SMS app may write messages. `--no-personal` turns both off;
   the GUI has matching toggles and shows the exports when exploring.
+- **Backup explorer in the GUI.** Opening a backup now gives tabs for
+  photos & videos (a gallery with a full-screen viewer), messages (SMS
+  and MMS as conversations, with contact names and inline attachments),
+  contacts, calls, calendar, Wi-Fi & settings, and files (previews,
+  downloads, and `.tar`/`.tar.gz` archives browsable like folders).
+  Root-mode photos are served straight out of `shared_storage.tar` by
+  offset, via a new native tar reader (ustar, GNU long names, pax), with
+  HTTP `Range` support so videos can seek. Files from the phone are never
+  served as anything a browser would run: markup comes back as text, and
+  every file response carries a `sandbox` Content-Security-Policy.
+- The web UI is embedded as several string literals joined at startup;
+  the single literal had outgrown the 64 KiB compilers must accept, which
+  broke clang builds under `-Werror`.
 - **Cancelling**: the GUI has a Cancel button and the CLI stops cleanly
   on Ctrl-C (a second Ctrl-C quits at once). The running adb process is
   terminated, and a cancelled backup still writes a manifest for what it

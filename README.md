@@ -74,7 +74,7 @@ files. `abp` gives you a single tool that:
 | **SD cards** | Mounted removable storage is copied along with shared storage. |
 | **Coverage warnings** | Every backup ends by naming what it could not capture: hardware-sealed apps (authenticators, Signal), and apps whose data needs root. |
 | **Whole-partition pull** | `--all-files` / `--pull-path` copy device paths verbatim via `adb pull`, recording what was readable. |
-| **Web GUI** | `abp gui` — a local, dependency-free web app for backing up, restoring and exploring backups. |
+| **Web GUI** | `abp gui` — a local, dependency-free web app for backing up and restoring, with a backup explorer: photo gallery, threaded messages, contacts, calls, calendar, Wi-Fi, and a file browser that opens tar archives. |
 | **Selective ops** | `--only`, `--exclude`, `--no-apks`, `--no-data`, `--no-shared`, `--no-personal`, `--system`. |
 | **Integrity checking** | Every archive is SHA-256 checksummed at backup time and verified before it's written back to the device. |
 | **No shell-injection surface** | Every value interpolated into a device command is validated *and* shell-quoted — never raw string concatenation of untrusted input. |
