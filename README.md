@@ -191,7 +191,7 @@ update to the latest `master`.
 
 ```sh
 # Install a specific branch/tag:
-ABP_VERSION=v1.0.0 curl -fsSL https://raw.githubusercontent.com/guillaume-behr/abp/master/install.sh | bash
+ABP_VERSION=v1.1.0 curl -fsSL https://raw.githubusercontent.com/guillaume-behr/abp/master/install.sh | bash
 
 # Install somewhere else:
 ABP_INSTALL_DIR="$HOME/bin" curl -fsSL https://raw.githubusercontent.com/guillaume-behr/abp/master/install.sh | bash

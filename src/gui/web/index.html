@@ -1298,8 +1298,13 @@ async function renderPhotos() {
                 img.addEventListener("error", () => { img.remove(); tile.append(el("div", { class: "fallback", text: item.name })); });
                 tile.append(img);
             } else {
-                tile.append(el("video", { preload: "metadata", muted: "", src: mediaUrl(item) + "#t=0.5" }));
-                tile.append(el("div", { class: "play", text: "▶" }));
+                // Videos have no lazy-loading attribute: attach the source only
+                // once the tile scrolls into view, or every tile on the page
+                // would open a connection at once.
+                const video = el("video", { preload: "metadata", muted: "" });
+                video.dataset.src = mediaUrl(item) + "#t=0.5";
+                videoObserver.observe(video);
+                tile.append(video, el("div", { class: "play", text: "▶" }));
             }
             gallery.append(tile);
         });
@@ -1320,6 +1325,14 @@ async function renderPhotos() {
     apply();
     return root;
 }
+
+const videoObserver = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        entry.target.src = entry.target.dataset.src;
+        videoObserver.unobserve(entry.target);
+    }
+}, { rootMargin: "200px" });
 
 const lightbox = { items: [], index: 0 };
 

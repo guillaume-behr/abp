@@ -319,7 +319,7 @@ void JsonValue::dumpTo(std::string& out, int indent, int depth) const {
     auto writeIndent = [&](int level) {
         if (indent > 0) {
             out.push_back('\n');
-            out.append(static_cast<size_t>(indent * level), ' ');
+            out.append(static_cast<size_t>(indent) * static_cast<size_t>(level), ' ');
         }
     };
 

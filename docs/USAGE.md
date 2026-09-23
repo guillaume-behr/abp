@@ -356,7 +356,7 @@ Starts the local web GUI and (unless told not to) opens it in a browser:
 
 ```
 $ abp gui
-abp 1.0.0 web GUI
+abp 1.1.0 web GUI
   Serving:      http://127.0.0.1:8787/?token=6f1c...
   Backup root:  /home/you/abp-backups
   Press Ctrl-C to stop.

@@ -38,7 +38,7 @@ backup directory is self-contained and can be moved/copied as a whole.
 ```jsonc
 {
   "format_version": 4,
-  "abp_version": "1.0.0",
+  "abp_version": "1.1.0",
   "created_at_utc": "2026-01-01T12:00:00Z",
   "mode": "root",                    // or "standard"
   "device": {

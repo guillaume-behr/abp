@@ -15,9 +15,19 @@ REMOVED=0
 info() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33mwarning:\033[0m %s\n' "$*" >&2; }
 
+# Only a binary that answers `--version` with "abp <version>" is ours; any
+# other program that happens to be called abp is left alone.
+is_abp() {
+    "$1" --version 2>/dev/null | grep -Eq '^abp [0-9]+\.[0-9]+'
+}
+
 remove_if_present() {
     local path="$1"
     [ -f "$path" ] || return 0
+    if ! is_abp "$path"; then
+        warn "Skipping $path: it is not the abp backup tool."
+        return 0
+    fi
     if rm -f "$path" 2>/dev/null; then
         info "Removed $path"
         REMOVED=1

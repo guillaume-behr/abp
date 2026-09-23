@@ -5,6 +5,7 @@
 #include <cerrno>
 #include <chrono>
 #include <ctime>
+#include <system_error>
 #include <csignal>
 #include <cstring>
 #include <fcntl.h>
@@ -431,7 +432,7 @@ ProcessResult Process::runToFile(const std::vector<std::string>& args, const std
     Fd outFile(open(outputPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644));
     if (!outFile.valid()) {
         result.spawnFailed = true;
-        result.stdErr = std::string("failed to open output file: ") + std::strerror(errno);
+        result.stdErr = std::string("failed to open output file: ") + std::generic_category().message(errno);
         return result;
     }
 
@@ -484,7 +485,7 @@ ProcessResult Process::runFromFile(const std::vector<std::string>& args, const s
     Fd inFile(open(inputPath.c_str(), O_RDONLY | O_CLOEXEC));
     if (!inFile.valid()) {
         result.spawnFailed = true;
-        result.stdErr = std::string("failed to open input file: ") + std::strerror(errno);
+        result.stdErr = std::string("failed to open input file: ") + std::generic_category().message(errno);
         return result;
     }
 

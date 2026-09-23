@@ -3,7 +3,9 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
+#include <csignal>
 #include <chrono>
 #include <cstdlib>
 #include <fstream>
@@ -972,6 +974,40 @@ private:
     BackupExplorer explorer_{fs::temp_directory_path() / ("abp-gui-" + std::to_string(::getpid()))};
 };
 
+/// The server a Ctrl-C (or SIGTERM) should stop. Lock-free atomics only, so
+/// the handler stays async-signal-safe.
+std::atomic<http::HttpServer*> g_interruptTarget{nullptr};
+
+extern "C" void onGuiInterrupt(int) {
+    Process::requestCancel(); // Stop a running job's adb too.
+    if (http::HttpServer* server = g_interruptTarget.load()) server->stop();
+}
+
+/// Makes Ctrl-C shut the GUI down cleanly -- the job is cancelled and the
+/// explorer's decompression cache removed -- instead of killing it outright.
+class InterruptGuard {
+public:
+    explicit InterruptGuard(http::HttpServer* server) {
+        g_interruptTarget.store(server);
+        struct sigaction action {};
+        action.sa_handler = onGuiInterrupt;
+        sigemptyset(&action.sa_mask);
+        ::sigaction(SIGINT, &action, &previousInt_);
+        ::sigaction(SIGTERM, &action, &previousTerm_);
+    }
+    ~InterruptGuard() {
+        ::sigaction(SIGINT, &previousInt_, nullptr);
+        ::sigaction(SIGTERM, &previousTerm_, nullptr);
+        g_interruptTarget.store(nullptr);
+    }
+    InterruptGuard(const InterruptGuard&) = delete;
+    InterruptGuard& operator=(const InterruptGuard&) = delete;
+
+private:
+    struct sigaction previousInt_ {};
+    struct sigaction previousTerm_ {};
+};
+
 void openInBrowser(const std::string& url) {
     // Fire and forget: the opener hands off to the desktop's handler, and abp
     // should not care whether one exists.
@@ -1025,9 +1061,12 @@ int GuiServer::run(const GuiOptions& optionsIn) {
 
     if (options.openBrowser) openInBrowser(url);
 
-    server->serveForever([app](const http::Request& request) { return app->handle(request); });
-
-    app->joinJob();
+    {
+        InterruptGuard interrupts(server.get());
+        server->serveForever([app](const http::Request& request) { return app->handle(request); });
+        app->joinJob();
+    }
+    Process::clearCancel();
     std::cout << "GUI stopped.\n";
     return 0;
 }

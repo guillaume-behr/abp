@@ -5,6 +5,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-09-23
+
 ### Added
 
 - `abp gui`: a local web GUI, served from the `abp` binary itself, for
@@ -153,8 +155,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   default also counts offline and unauthorized devices and refuses an
   unpinned command next to them.
 
+- Regression tests for subprocess handling, `adb` output parsing (via a
+  fake `adb`), filesystem helpers, and the JSON/manifest hardening
+  above, bringing the suite from 14 to 61 cases.
+- A CI job that builds and runs the test suite under
+  AddressSanitizer/UndefinedBehaviorSanitizer.
+- The test runner names the test it is about to run (so a crash is
+  attributable) and accepts name filters and `--list`.
+
 ### Fixed
 
+- The backup explorer's tar reader no longer trusts sizes in archive
+  headers: a corrupt pax or long-name record claiming exabytes made it
+  try to allocate that much and crash `abp gui` (found by fuzzing). An
+  archive cut short, as an interrupted backup leaves it, keeps the
+  members it fully contains.
+- Members recorded with a pax size override -- how tar stores files over
+  8 GiB, such as long videos -- are skipped by their real size; the
+  plain header size landed mid-file and broke everything after them.
+- Ctrl-C (or SIGTERM) stops `abp gui` cleanly: a running job is cancelled
+  and the explorer's decompression cache is removed, instead of both
+  being left behind by an abrupt exit.
+- `uninstall.sh` only removes a binary that identifies itself as abp,
+  rather than whatever program named `abp` is first on the PATH.
+- The gallery attaches video sources only as tiles scroll into view,
+  instead of opening a connection per video tile at once.
+- Error messages for failed file opens no longer use the non-thread-safe
+  `strerror()` from concurrent GUI threads.
 - Child processes that are given no input now read `/dev/null` instead of
   abp's own stdin. `adb shell` forwards its stdin to the device, so it
   could swallow keystrokes, and under `abp gui &` its first read of the
@@ -315,16 +342,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   before overwriting it.
 - Running `abp` with no arguments prints usage to stderr (it is a usage
   error) rather than stdout.
-
-### Added
-
-- Regression tests for subprocess handling, `adb` output parsing (via a
-  fake `adb`), filesystem helpers, and the JSON/manifest hardening
-  above, bringing the suite from 14 to 61 cases.
-- A CI job that builds and runs the test suite under
-  AddressSanitizer/UndefinedBehaviorSanitizer.
-- The test runner names the test it is about to run (so a crash is
-  attributable) and accepts name filters and `--list`.
 
 ## [1.0.0] - 2026-09-10
 

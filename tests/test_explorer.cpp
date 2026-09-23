@@ -2,6 +2,7 @@
 
 #include <unistd.h>
 
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -205,4 +206,65 @@ ABP_TEST(http_parses_byte_ranges) {
     ABP_CHECK(http::parseByteRange("bytes=0-1,5-6", 100, &start, &length) == RangeResult::None);
     ABP_CHECK(http::parseByteRange("items=0-1", 100, &start, &length) == RangeResult::None);
     ABP_CHECK(http::parseByteRange("bytes=9-3", 100, &start, &length) == RangeResult::None);
+}
+
+namespace {
+
+/// Builds one 512-byte tar header with a valid checksum.
+std::string tarHeader(const std::string& name, char type, unsigned long long size) {
+    std::string h(512, '\0');
+    h.replace(0, name.size(), name);
+    std::snprintf(&h[100], 8, "%07o", 0644);
+    std::snprintf(&h[124], 12, "%011llo", size);
+    std::snprintf(&h[136], 12, "%011o", 1700000000);
+    h[156] = type;
+    h.replace(257, 6, std::string("ustar\0", 6));
+    h.replace(263, 2, "00");
+    unsigned sum = 0;
+    for (size_t i = 0; i < 512; ++i) sum += (i >= 148 && i < 156) ? 32u : static_cast<unsigned char>(h[i]);
+    std::snprintf(&h[148], 8, "%06o", sum);
+    h[155] = ' ';
+    return h;
+}
+
+std::string padded(const std::string& data) { return data + std::string((512 - data.size() % 512) % 512, '\0'); }
+
+} // namespace
+
+ABP_TEST(tar_uses_pax_size_overrides_to_find_the_next_member) {
+    // pax records files over 8 GiB with a size override and a meaningless
+    // ustar size; skipping by the latter lands mid-file.
+    const std::string body(700, 'v');
+    const std::string record = "12 size=700\n";
+    const std::string archive = tarHeader("PaxHeaders/big", 'x', record.size()) + padded(record) +
+                                tarHeader("big.mp4", '0', 0) + padded(body) +
+                                tarHeader("after.txt", '0', 5) + padded("after") + std::string(1024, '\0');
+    TarFixture fixture;
+    fsutil::writeTextFile(fixture.dir() / "pax.tar", archive);
+    const auto entries = tar::index(fixture.dir() / "pax.tar");
+    ABP_CHECK_EQ(entries.size(), 2u);
+    ABP_CHECK_EQ(entries[0].size, 700ULL);
+    ABP_CHECK_EQ(entries[1].name, "after.txt");
+    ABP_CHECK_EQ(readSegment(fixture.dir() / "pax.tar", entries[1].offset, entries[1].size), "after");
+}
+
+ABP_TEST(tar_survives_corrupt_sizes_and_truncation) {
+    TarFixture fixture;
+    // A pax header claiming a near-infinite record must not be allocated.
+    const std::string huge = tarHeader("PaxHeaders/x", 'x', 0x3fffffffffffULL) + std::string(1024, '\0');
+    fsutil::writeTextFile(fixture.dir() / "huge.tar", huge);
+    // Either outcome is fine -- no entries, or rejected as corrupt -- as long
+    // as it is not an attempt to allocate the claimed size.
+    try {
+        ABP_CHECK(tar::index(fixture.dir() / "huge.tar").empty());
+    } catch (const std::runtime_error&) {
+    }
+
+    // An archive cut off mid-member keeps the members it holds in full.
+    const std::string cut = tarHeader("whole.txt", '0', 5) + padded("whole") + tarHeader("cut.bin", '0', 4096) +
+                            std::string(100, 'c');
+    fsutil::writeTextFile(fixture.dir() / "cut.tar", cut);
+    const auto entries = tar::index(fixture.dir() / "cut.tar");
+    ABP_CHECK_EQ(entries.size(), 1u);
+    ABP_CHECK_EQ(entries[0].name, "whole.txt");
 }

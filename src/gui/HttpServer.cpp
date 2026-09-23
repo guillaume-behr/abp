@@ -389,7 +389,7 @@ HttpServer::~HttpServer() { stop(); }
 
 bool HttpServer::listen(const std::string& host, int port, std::string* error) {
     auto fail = [&](const std::string& message) {
-        if (error != nullptr) *error = message + ": " + std::strerror(errno);
+        if (error != nullptr) *error = message + ": " + std::generic_category().message(errno);
         return false;
     };
 
@@ -452,7 +452,7 @@ void HttpServer::serveForever(Handler handler) {
         if (client < 0) {
             if (errno == EINTR) continue;
             if (stopping_) break;
-            Logger::debug(std::string("accept() failed: ") + std::strerror(errno));
+            Logger::debug(std::string("accept() failed: ") + std::generic_category().message(errno));
             continue;
         }
 

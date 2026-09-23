@@ -5,11 +5,17 @@
 #include <fstream>
 #include <map>
 #include <stdexcept>
+#include <system_error>
 
 namespace abp::tar {
 namespace {
 
 constexpr size_t kBlock = 512;
+
+/// GNU long names and pax records are a few hundred bytes in practice. A
+/// larger claim can only be corruption, and honouring it would mean
+/// allocating whatever a damaged header says -- exabytes, potentially.
+constexpr unsigned long long kMaxMetadataBytes = 1024 * 1024;
 
 std::string field(const std::array<char, kBlock>& header, size_t offset, size_t length) {
     size_t end = offset;
@@ -70,7 +76,8 @@ void parsePax(const std::string& data, std::map<std::string, std::string>& out) 
         } catch (const std::exception&) {
             break;
         }
-        if (length == 0 || pos + length > data.size()) break;
+        // A record is at least "<digits> k=\n"; anything shorter is corrupt.
+        if (length < (space - pos) + 3 || pos + length > data.size()) break;
         const std::string record = data.substr(space + 1, length - (space - pos) - 2); // Drop the trailing '\n'.
         const size_t equals = record.find('=');
         if (equals != std::string::npos) out[record.substr(0, equals)] = record.substr(equals + 1);
@@ -83,6 +90,9 @@ void parsePax(const std::string& data, std::map<std::string, std::string>& out) 
 std::vector<Entry> index(const std::filesystem::path& path) {
     std::ifstream in(path, std::ios::binary);
     if (!in) throw std::runtime_error("cannot open archive: " + path.string());
+    std::error_code sizeError;
+    const unsigned long long fileSize = std::filesystem::file_size(path, sizeError);
+    if (sizeError) throw std::runtime_error("cannot read archive size: " + path.string());
 
     std::vector<Entry> entries;
     std::array<char, kBlock> header{};
@@ -119,9 +129,18 @@ std::vector<Entry> index(const std::filesystem::path& path) {
         const char type = header[156];
         unsigned long long size = number(header, 124, 12);
         const unsigned long long dataOffset = position;
+        // A member whose data runs past the end of the file means the archive
+        // was cut short (an interrupted backup): keep what came before it.
+        // Compared by subtraction so a corrupt, enormous size cannot overflow.
+        const bool hasData = type != '1' && type != '2' && type != '5';
+        if (hasData && size > fileSize - dataOffset) break;
         const unsigned long long next = dataOffset + (size + kBlock - 1) / kBlock * kBlock;
 
         if (type == 'L' || type == 'K' || type == 'x') {
+            if (size > kMaxMetadataBytes) {
+                throw std::runtime_error("corrupt tar header at offset " + std::to_string(dataOffset - kBlock) +
+                                         " in " + path.string());
+            }
             // Metadata for the entry that follows, not an entry itself.
             skipTo(dataOffset);
             std::string data = readData(size);
@@ -146,7 +165,9 @@ std::vector<Entry> index(const std::filesystem::path& path) {
             try {
                 size = std::stoull(pax["size"]);
             } catch (const std::exception&) {
+                // Unparseable override: the header's own size stands.
             }
+            if (size > fileSize - dataOffset) break; // Same truncation rule as above.
         }
         entry.name = cleanName(name);
         entry.linkTarget = !longLink.empty() ? longLink : pax.count("linkpath") ? pax["linkpath"] : field(header, 157, 100);
@@ -170,8 +191,10 @@ std::vector<Entry> index(const std::filesystem::path& path) {
         longName.clear();
         longLink.clear();
         pax.clear();
-        // Links carry no data even when a size is recorded.
-        skipTo(type == '1' || type == '2' || type == '5' ? dataOffset : next);
+        // Links carry no data even when a size is recorded. The data length
+        // is the final `size`: a pax override is how files over 8 GiB are
+        // recorded, and the ustar size field alone would land mid-file.
+        skipTo(hasData ? dataOffset + (size + kBlock - 1) / kBlock * kBlock : dataOffset);
     }
     return entries;
 }
