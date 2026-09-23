@@ -1,6 +1,7 @@
 #include "abp/BackupStore.h"
 
 #include <algorithm>
+#include <stdexcept>
 #include <system_error>
 
 #include "abp/FsUtil.h"
@@ -17,12 +18,17 @@ void collect(const fs::path& dir, int depthLeft, std::vector<BackupSummaryInfo>&
     }
     if (depthLeft <= 0) return;
 
+    // Advanced with increment(ec) rather than a range-for: the range-for's
+    // operator++ throws on an I/O error partway through a directory, which
+    // would abort the whole scan (and the GUI request) over one bad folder.
     std::error_code ec;
     fs::directory_iterator it(dir, fs::directory_options::skip_permission_denied, ec);
     if (ec) return;
-    for (const auto& entry : it) {
-        if (!entry.is_directory(ec) || ec) continue;
-        collect(entry.path(), depthLeft - 1, out);
+    for (const fs::directory_iterator end; it != end; it.increment(ec)) {
+        if (ec) break;
+        std::error_code entryEc;
+        if (!it->is_directory(entryEc) || entryEc) continue;
+        collect(it->path(), depthLeft - 1, out);
     }
 }
 
@@ -125,12 +131,17 @@ std::vector<BackupFileEntry> BackupStore::listDirectory(const fs::path& backupDi
 
     fs::path base = fs::weakly_canonical(backupDir, ec);
     std::vector<BackupFileEntry> entries;
-    for (const auto& item : fs::directory_iterator(target, fs::directory_options::skip_permission_denied, ec)) {
+    fs::directory_iterator it(target, fs::directory_options::skip_permission_denied, ec);
+    if (ec) throw std::runtime_error("Cannot read directory " + relative + ": " + ec.message());
+    for (const fs::directory_iterator end; it != end; it.increment(ec)) {
+        if (ec) break;
+        const fs::path& itemPath = it->path();
+        std::error_code entryEc;
         BackupFileEntry entry;
-        entry.name = item.path().filename().string();
-        entry.relativePath = fs::relative(item.path(), base, ec).generic_string();
-        entry.isDirectory = item.is_directory(ec);
-        entry.sizeBytes = entry.isDirectory ? fsutil::directorySize(item.path()) : fsutil::fileSize(item.path());
+        entry.name = itemPath.filename().string();
+        entry.relativePath = fs::relative(itemPath, base, entryEc).generic_string();
+        entry.isDirectory = it->is_directory(entryEc);
+        entry.sizeBytes = entry.isDirectory ? fsutil::directorySize(itemPath) : fsutil::fileSize(itemPath);
         entries.push_back(std::move(entry));
     }
 

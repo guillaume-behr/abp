@@ -255,6 +255,7 @@ dialog::backdrop { background: rgba(0,0,0,.5); }
             <label class="toggle"><input type="checkbox" id="b-data" checked><span><span class="t">App data</span><small>private per-app data</small></span></label>
             <label class="toggle"><input type="checkbox" id="b-shared" checked><span><span class="t">Shared storage</span><small>/sdcard photos, downloads…</small></span></label>
             <label class="toggle"><input type="checkbox" id="b-system"><span><span class="t">System apps</span><small>off by default</small></span></label>
+            <label class="toggle"><input type="checkbox" id="b-all-files"><span><span class="t">Device partitions</span><small>raw <span class="mono">adb pull</span> of /data, /system, … (large)</small></span></label>
         </div>
     </div>
 
@@ -422,9 +423,12 @@ function ask(title, body) {
         $("confirm-title").textContent = title;
         $("confirm-body").textContent = body;
         const dialog = $("confirm");
-        const done = (value) => { dialog.close(); resolve(value); };
-        $("confirm-ok").onclick = () => done(true);
-        $("confirm-cancel").onclick = () => done(false);
+        // Escape closes the dialog without either button being clicked, so
+        // the answer is taken from the "close" event rather than the clicks.
+        dialog.returnValue = "";
+        dialog.onclose = () => resolve(dialog.returnValue === "ok");
+        $("confirm-ok").onclick = () => dialog.close("ok");
+        $("confirm-cancel").onclick = () => dialog.close("cancel");
         dialog.showModal();
     });
 }
@@ -626,6 +630,7 @@ $("start-backup").addEventListener("click", async () => {
         include_data: $("b-data").checked,
         include_shared: $("b-shared").checked,
         include_system: $("b-system").checked,
+        all_files: $("b-all-files").checked,
         mode: document.querySelector("input[name=b-mode]:checked").value,
     };
     if ($("b-select-packages").checked) {
@@ -634,9 +639,10 @@ $("start-backup").addEventListener("click", async () => {
         body.only = selected;
     }
 
-    const scope = [body.include_apks && "APKs", body.include_data && "app data", body.include_shared && "shared storage"]
-        .filter(Boolean).join(", ") || "nothing";
-    const ok = await ask("Start backup?", "Back up " + scope + " from " + device.serial + " into " + output + ".");
+    const scope = [body.include_apks && "APKs", body.include_data && "app data", body.include_shared && "shared storage",
+        body.all_files && "every device partition"].filter(Boolean).join(", ") || "nothing";
+    const ok = await ask("Start backup?", "Back up " + scope + " from " + device.serial + " into " + output + "." +
+        (body.all_files ? " Pulling whole partitions can take a long time and use many gigabytes." : ""));
     if (!ok) return;
 
     try {
@@ -852,13 +858,16 @@ async function openBackup(path) {
     const scroll = el("div", { class: "scroll" });
     const table = el("table");
     const head = el("tr");
-    for (const column of ["Package", "APKs", "Data", "External", "Status"]) head.append(el("th", { text: column }));
+    for (const column of ["Package", "APKs", "Data", "Captured via", "External", "Status"]) head.append(el("th", { text: column }));
     table.append(head);
     for (const pkg of manifest.packages) {
         const row = el("tr");
         row.append(el("td", { class: "mono", text: pkg.name }));
         row.append(el("td", { class: "num", text: pkg.apk_included ? String(pkg.apk_count) : "—" }));
-        row.append(el("td", { class: "num", text: pkg.data_included ? pkg.data_size_human : "—" }));
+        // Data in the shared legacy archive has no per-package size.
+        const legacy = pkg.data_capture_method === "legacy_adb_backup";
+        row.append(el("td", { class: "num", text: pkg.data_included ? (legacy ? "in .ab" : pkg.data_size_human) : "—" }));
+        row.append(el("td", { class: "muted", text: pkg.data_included ? captureMethodLabel(pkg.data_capture_method) : "—" }));
         row.append(el("td", { class: "num", text: pkg.external_data_included ? pkg.external_data_size_human : "—" }));
         row.append(el("td", {}, pkg.error
             ? el("span", { class: "err", text: pkg.error })
@@ -868,12 +877,43 @@ async function openBackup(path) {
     scroll.append(table);
     card.append(scroll);
 
+    const captures = manifest.filesystem_captures || [];
+    if (captures.length > 0) {
+        card.append(el("h3", { style: "margin-top:16px", text: "Device paths (not restored automatically)" }));
+        const fsTable = el("table");
+        const fsHead = el("tr");
+        for (const column of ["Device path", "Stored as", "Size", "Status"]) fsHead.append(el("th", { text: column }));
+        fsTable.append(fsHead);
+        for (const capture of captures) {
+            const row = el("tr");
+            row.append(el("td", { class: "mono", text: capture.device_path }));
+            row.append(el("td", { class: "mono muted", text: capture.local_path }));
+            row.append(el("td", { class: "num", text: capture.size_human }));
+            row.append(el("td", {}, capture.complete
+                ? el("span", { class: "badge good", text: "complete" })
+                : el("span", { class: "badge warn", title: capture.note || "", text: "partial" })));
+            fsTable.append(row);
+        }
+        const fsScroll = el("div", { class: "scroll" });
+        fsScroll.append(fsTable);
+        card.append(fsScroll);
+    }
+
     card.append(el("h3", { style: "margin-top:16px", text: "Files" }));
     const browser = el("div");
     card.append(browser);
     node.append(card);
     node.scrollIntoView({ behavior: "smooth", block: "start" });
     browseFiles(summary.path, "", browser);
+}
+
+function captureMethodLabel(method) {
+    switch (method) {
+        case "root_tar": return "root tar";
+        case "run_as_tar": return "run-as";
+        case "legacy_adb_backup": return "adb backup";
+        default: return "—";
+    }
 }
 
 async function browseFiles(backupPath, sub, container) {
@@ -969,10 +1009,16 @@ function applyJob(job, expand) {
 
     const log = $("job-log");
     const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
-    for (const line of job.lines || []) {
+    // `lines` holds the log from some earlier offset up to log_size. Two
+    // responses can overlap (a status load racing a poll), so work out where
+    // this batch starts and skip whatever is already on screen.
+    const lines = job.lines || [];
+    const firstIndex = job.log_size - lines.length;
+    lines.forEach((line, i) => {
+        if (firstIndex + i < state.logShown) return;
         log.append(el("div", { class: "line " + line.level, text: line.text }));
-    }
-    state.logShown = job.log_size;
+    });
+    state.logShown = Math.max(state.logShown, job.log_size);
     if (atBottom) log.scrollTop = log.scrollHeight;
 
     if (!running && job.result) appendResult(job);
@@ -995,14 +1041,25 @@ function appendResult(job) {
     if (job.kind === "backup") {
         lines.push("Packages:       " + (result.package_count ?? 0));
         lines.push("With app data:  " + (result.packages_with_data ?? 0));
+        if (result.packages_via_root_tar) lines.push("  via root tar:   " + result.packages_via_root_tar);
+        if (result.packages_via_run_as) lines.push("  via run-as:     " + result.packages_via_run_as + " (complete per-app archives)");
+        if (result.packages_via_legacy_backup) lines.push("  via adb backup: " + result.packages_via_legacy_backup + " (partial; apps may have opted out)");
         lines.push("Errors:         " + (result.packages_with_errors ?? 0));
         lines.push("Shared storage: " + (result.shared_storage_included ? "included" : "skipped"));
+        if (result.filesystem_capture_count) {
+            lines.push("Device paths:   " + result.filesystem_capture_count + " pulled" +
+                (result.filesystem_partial_count ? " (" + result.filesystem_partial_count + " only partially readable)" : ""));
+        }
         lines.push("Total size:     " + (result.total_size_human || "0 B"));
         lines.push("Output:         " + (result.output_dir || job.target));
     } else {
         lines.push("Packages restored: " + (result.packages_restored ?? 0));
         lines.push("Packages failed:   " + (result.packages_failed ?? 0));
+        if (result.packages_skipped) lines.push("Nothing to restore: " + result.packages_skipped + " (no APK and no data in the backup)");
         lines.push("Shared storage:    " + (result.shared_storage_restored ? "restored" : "skipped"));
+        if (result.filesystem_captures_present) {
+            lines.push("Device paths:      " + result.filesystem_captures_present + " present, not restored (copy by hand)");
+        }
     }
     for (const message of result.messages || []) lines.push("error: " + message);
 
@@ -1011,21 +1068,28 @@ function appendResult(job) {
     log.scrollTop = log.scrollHeight;
 }
 
+// Polls with a timeout chain rather than setInterval: an interval keeps
+// firing while a slow response is still outstanding, and overlapping polls
+// ask for the same log range twice.
 function startPolling() {
     if (state.polling) return;
-    state.polling = setInterval(async () => {
+    const tick = async () => {
         try {
             const payload = await api("/api/job?since=" + state.logShown);
+            if (!state.polling) return;
+            state.polling = null;
             applyJob(payload.job, false);
         } catch (error) {
-            /* The server may be shutting down; the next tick will retry. */
+            /* The server may be shutting down; retry on the next tick. */
+            if (state.polling) state.polling = setTimeout(tick, 900);
         }
-    }, 900);
+    };
+    state.polling = setTimeout(tick, 900);
 }
 
 function stopPolling() {
     if (!state.polling) return;
-    clearInterval(state.polling);
+    clearTimeout(state.polling);
     state.polling = null;
 }
 

@@ -91,11 +91,13 @@ then be unable to read its own data.
    which `tar` also doesn't preserve/regenerate correctly across a
    restore onto a different inode set.
 
-If step 4's `stat` fails (e.g. the app wasn't actually installed first),
-`abp` still extracts the archive but logs a warning: the data will be
-readable by root but may not be usable by the app until it's relaunched
-in a way that triggers Android to fix ownership itself (or until you
-`chown` it manually).
+If step 4's `stat` fails, the app is not installed (its APK was not
+restored, or failed to install), and `abp` skips that package and records
+it as failed rather than extracting anyway. Unpacking into a
+`/data/data/<pkg>` the package manager never created would leave a
+root-owned directory no app UID can use, which also gets in the way when
+the app is installed later. Install the app (or restore without
+`--no-apks`) and run the restore again.
 
 If step 1's checksum does not match, that package is skipped entirely
 and recorded as failed — a truncated or corrupted archive is never

@@ -138,6 +138,15 @@ void redirect(Fd& source, int target) {
     source.close();
 }
 
+/// Opens /dev/null for reading, close-on-exec, as the stdin of a child that
+/// is given no input. Inheriting abp's own stdin instead would let `adb shell`
+/// (which forwards its stdin to the device) swallow whatever the user types,
+/// and when abp runs as a background job -- `abp gui &` -- the child's first
+/// read of the terminal stops it with SIGTTIN, hanging abp along with it.
+/// Returns an invalid Fd if /dev/null cannot be opened; the child then
+/// inherits stdin as before, which is no worse than not trying.
+Fd openNullInput() { return Fd(::open("/dev/null", O_RDONLY | O_CLOEXEC)); }
+
 /// Builds the argv array exec() needs. This MUST be called before fork(),
 /// never in the child: it allocates, and the only async-signal-safe thing a
 /// forked child of a multi-threaded process may do is exec. abp forks from
@@ -306,6 +315,7 @@ ProcessResult Process::run(const std::vector<std::string>& args, const std::stri
         result.spawnFailed = true;
         return result;
     }
+    Fd nullInput = stdinData == nullptr ? openNullInput() : Fd();
 
     auto argv = buildArgv(args);
 
@@ -322,6 +332,8 @@ ProcessResult Process::run(const std::vector<std::string>& args, const std::stri
         errPipe.read().close();
         if (stdinData != nullptr) {
             redirect(inPipe.read(), STDIN_FILENO);
+        } else if (nullInput.valid()) {
+            redirect(nullInput, STDIN_FILENO);
         }
         redirect(outPipe.write(), STDOUT_FILENO);
         redirect(errPipe.write(), STDERR_FILENO);
@@ -331,6 +343,7 @@ ProcessResult Process::run(const std::vector<std::string>& args, const std::stri
     }
 
     // Parent: drop the ends owned by the child so the pipes report EOF.
+    nullInput.close();
     inPipe.read().close();
     outPipe.write().close();
     errPipe.write().close();
@@ -361,6 +374,7 @@ ProcessResult Process::runToFile(const std::vector<std::string>& args, const std
         result.spawnFailed = true;
         return result;
     }
+    Fd nullInput = openNullInput();
 
     auto argv = buildArgv(args);
 
@@ -372,6 +386,7 @@ ProcessResult Process::runToFile(const std::vector<std::string>& args, const std
 
     if (pid == 0) {
         errPipe.read().close();
+        if (nullInput.valid()) redirect(nullInput, STDIN_FILENO);
         redirect(outFile, STDOUT_FILENO);
         redirect(errPipe.write(), STDERR_FILENO);
 
@@ -379,6 +394,7 @@ ProcessResult Process::runToFile(const std::vector<std::string>& args, const std
         _exit(127);
     }
 
+    nullInput.close();
     outFile.close();
     errPipe.write().close();
 

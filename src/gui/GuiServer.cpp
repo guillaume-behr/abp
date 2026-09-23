@@ -20,6 +20,7 @@
 #include "abp/BackupManager.h"
 #include "abp/BackupOptions.h"
 #include "abp/BackupStore.h"
+#include "abp/DevicePaths.h"
 #include "abp/HttpServer.h"
 #include "abp/Json.h"
 #include "abp/Logger.h"
@@ -189,6 +190,7 @@ JsonValue manifestJson(const Manifest& manifest) {
         for (const auto& file : entry.apkFiles) apkFiles.push_back(file);
         item.set("apk_files", apkFiles);
         item.set("data_included", entry.dataIncluded);
+        item.set("data_capture_method", dataCaptureMethodName(entry.dataCaptureMethod));
         item.set("data_archive", entry.dataArchive);
         item.set("data_bytes", entry.dataArchiveBytes);
         item.set("data_size_human", strutil::formatBytes(entry.dataArchiveBytes));
@@ -201,6 +203,19 @@ JsonValue manifestJson(const Manifest& manifest) {
         packages.push_back(item);
     }
     object.set("packages", packages);
+
+    JsonValue captures = JsonValue::makeArray();
+    for (const auto& capture : manifest.filesystemCaptures) {
+        JsonValue item = JsonValue::makeObject();
+        item.set("device_path", capture.devicePath);
+        item.set("local_path", capture.localPath);
+        item.set("bytes", capture.bytes);
+        item.set("size_human", strutil::formatBytes(capture.bytes));
+        item.set("complete", capture.complete);
+        item.set("note", capture.note);
+        captures.push_back(item);
+    }
+    object.set("filesystem_captures", captures);
     return object;
 }
 
@@ -373,7 +388,12 @@ JsonValue backupSummaryResultJson(const BackupSummary& summary) {
     object.set("package_count", summary.packageCount);
     object.set("packages_with_data", summary.packagesWithData);
     object.set("packages_with_errors", summary.packagesWithErrors);
+    object.set("packages_via_root_tar", summary.packagesCapturedByRootTar);
+    object.set("packages_via_run_as", summary.packagesCapturedByRunAs);
+    object.set("packages_via_legacy_backup", summary.packagesCapturedByLegacyBackup);
     object.set("shared_storage_included", summary.sharedStorageIncluded);
+    object.set("filesystem_capture_count", summary.filesystemCaptureCount);
+    object.set("filesystem_partial_count", summary.filesystemPartialCount);
     object.set("total_bytes", summary.totalBytes);
     object.set("total_size_human", strutil::formatBytes(summary.totalBytes));
     object.set("output_dir", summary.outputDir.string());
@@ -390,6 +410,7 @@ JsonValue restoreSummaryResultJson(const RestoreSummary& summary) {
     object.set("packages_failed", summary.packagesFailed);
     object.set("packages_skipped", summary.packagesSkipped);
     object.set("shared_storage_restored", summary.sharedStorageRestored);
+    object.set("filesystem_captures_present", summary.filesystemCapturesPresent);
     JsonValue messages = JsonValue::makeArray();
     for (const auto& message : summary.messages) messages.push_back(message);
     object.set("messages", messages);
@@ -439,9 +460,16 @@ private:
         if (options_.host != "127.0.0.1" && options_.host != "localhost") return true;
 
         std::string host = request.header("Host");
-        size_t colon = host.rfind(':');
-        if (colon != std::string::npos) host = host.substr(0, colon);
-        return host.empty() || host == "127.0.0.1" || host == "localhost" || host == "[::1]" || host == "::1";
+        if (!host.empty() && host.front() == '[') {
+            // IPv6 literal: the port, if any, follows the closing bracket, and
+            // the address itself is full of colons.
+            size_t close = host.find(']');
+            host = close == std::string::npos ? std::string("?") : host.substr(0, close + 1);
+        } else {
+            size_t colon = host.rfind(':');
+            if (colon != std::string::npos) host = host.substr(0, colon);
+        }
+        return host.empty() || host == "127.0.0.1" || host == "localhost" || host == "[::1]";
     }
 
     http::Response route(const http::Request& request) {
@@ -511,14 +539,16 @@ private:
     http::Response handleDevice(const http::Request& request) {
         if (!AdbClient::isAdbAvailable()) return errorResponse(adbMissingMessage(), 400);
         AdbClient adb(request.param("serial"));
-        if (!adb.isConnected()) return errorResponse("No connected and authorized device found.", 404);
+        if (std::string problem = adb.connectionProblem(); !problem.empty()) return errorResponse(problem, 404);
+        adb = adb.pinned();
         return jsonResponse(deviceJson(adb.queryDeviceInfo()));
     }
 
     http::Response handlePackages(const http::Request& request) {
         if (!AdbClient::isAdbAvailable()) return errorResponse(adbMissingMessage(), 400);
         AdbClient adb(request.param("serial"));
-        if (!adb.isConnected()) return errorResponse("No connected and authorized device found.", 404);
+        if (std::string problem = adb.connectionProblem(); !problem.empty()) return errorResponse(problem, 404);
+        adb = adb.pinned();
 
         bool includeSystem = request.param("system") == "1" || request.param("system") == "true";
 
@@ -633,6 +663,17 @@ private:
         options.excludePackages = stringArray(body.get("exclude"));
         options.assumeYes = true; // The browser already asked for confirmation.
 
+        // Same meaning as the CLI's --all-files and --pull-path, and refused
+        // up front in the same way rather than after a long backup.
+        if (boolField(body, "all_files", false)) options.filesystemPaths = devicepaths::defaultCaptureRoots();
+        for (const auto& path : stringArray(body.get("pull_paths"))) options.filesystemPaths.push_back(path);
+        for (const auto& path : options.filesystemPaths) {
+            const devicepaths::PathVerdict verdict = devicepaths::classify(path);
+            if (verdict != devicepaths::PathVerdict::Ok) {
+                return errorResponse(devicepaths::explainVerdict(verdict, path), 400);
+            }
+        }
+
         std::string mode = body.get("mode").asString("auto");
         if (mode == "root") options.mode = BackupMode::Root;
         else if (mode == "standard") options.mode = BackupMode::Standard;
@@ -693,12 +734,17 @@ private:
 };
 
 void openInBrowser(const std::string& url) {
-    // Fire and forget: xdg-open hands off to the desktop's handler, and abp
+    // Fire and forget: the opener hands off to the desktop's handler, and abp
     // should not care whether one exists.
-    std::thread([url]() {
-        ProcessResult result = Process::run({"xdg-open", url});
+#if defined(__APPLE__)
+    const char* opener = "open";
+#else
+    const char* opener = "xdg-open";
+#endif
+    std::thread([url, opener]() {
+        ProcessResult result = Process::run({opener, url});
         if (!result.ok()) {
-            Logger::debug("Could not open a browser automatically (xdg-open failed).");
+            Logger::debug(std::string("Could not open a browser automatically (") + opener + " failed).");
         }
     }).detach();
 }

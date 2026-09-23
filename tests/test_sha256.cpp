@@ -1,5 +1,8 @@
 #include "abp/Sha256.h"
+
+#include <filesystem>
 #include <string>
+
 #include "TestFramework.h"
 
 using namespace abp::crypto;
@@ -66,4 +69,17 @@ ABP_TEST(sha256_matches_reference_digests_around_block_boundaries) {
     for (const auto& testCase : cases) {
         ABP_CHECK_EQ(sha256Hex(std::string(testCase.length, 'a')), std::string(testCase.digest));
     }
+}
+
+ABP_TEST(sha256_file_refuses_what_it_cannot_read_to_the_end) {
+    // Opening a directory "succeeds" on Linux, and every read then fails. That
+    // used to hash as the empty string, which checksumMatches() would accept
+    // for any archive whose recorded digest happened to be that of nothing.
+    bool threw = false;
+    try {
+        sha256HexFile(std::filesystem::temp_directory_path().string());
+    } catch (const std::exception&) {
+        threw = true;
+    }
+    ABP_CHECK(threw);
 }

@@ -36,7 +36,7 @@ private:
 std::string sha256Hex(const std::string& data);
 
 /// Convenience: hashes the contents of a file on disk. Throws
-/// std::runtime_error if the file cannot be opened.
+/// std::runtime_error if the file cannot be opened or read to the end.
 std::string sha256HexFile(const std::string& path);
 
 } // namespace abp::crypto

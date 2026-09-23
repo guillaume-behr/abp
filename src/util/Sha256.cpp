@@ -159,6 +159,13 @@ std::string sha256HexFile(const std::string& path) {
             hasher.update(buffer.data(), static_cast<size_t>(got));
         }
     }
+    // The loop above also ends on a read *error* (badbit), not just at end of
+    // file. Returning a digest then would fingerprint only the part that could
+    // be read -- a directory opened by mistake hashes as the empty string --
+    // and a restore would accept a truncated archive as verified.
+    if (file.bad() || !file.eof()) {
+        throw std::runtime_error("sha256HexFile: read error: " + path);
+    }
     return hasher.hexDigest();
 }
 

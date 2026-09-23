@@ -238,12 +238,26 @@ bool StandardBackend::backupSharedStorage(const AdbClient& adb, const fs::path& 
     fs::remove_all(localDir, ec); // adb pull creates the destination itself.
 
     Logger::info("Pulling shared storage from /sdcard (this can take a while for large media libraries).");
-    if (!adb.pull("/sdcard", localDir.string())) {
-        return false;
-    }
+    // pullTree rather than pull: it keeps timestamps (a restored photo library
+    // should not all be dated today), and it tells a partial copy apart from
+    // a failed one. adb gives up on a tree at the first unreadable file, so a
+    // non-zero exit usually still leaves most of /sdcard on disk -- and
+    // throwing that away, as treating it as a plain failure did, left an
+    // unlisted multi-gigabyte directory behind in the backup.
+    bool sawErrors = false;
+    std::string errorText;
+    const bool ok = adb.pullTree("/sdcard", localDir.string(), &sawErrors, &errorText);
 
     unsigned long long size = fsutil::directorySize(localDir);
-    if (size == 0) return false;
+    if (size == 0) {
+        if (!errorText.empty()) Logger::warn("adb pull /sdcard failed: " + errorText.substr(0, 500));
+        fs::remove_all(localDir, ec);
+        return false;
+    }
+    if (!ok || sawErrors) {
+        Logger::warn("Shared storage was only partly readable; " + strutil::formatBytes(size) +
+                     " were captured." + (errorText.empty() ? std::string() : " adb said: " + errorText.substr(0, 500)));
+    }
 
     manifest.sharedStorageIncluded = true;
     manifest.sharedStorageIsDirectory = true;

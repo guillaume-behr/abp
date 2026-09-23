@@ -131,10 +131,11 @@ int cmdDevices() {
 int cmdInfo(const std::string& serial) {
     if (!ensureAdbAvailable()) return 1;
     AdbClient adb(serial);
-    if (!adb.isConnected()) {
-        Logger::error("No connected and authorized device found.");
+    if (std::string problem = adb.connectionProblem(); !problem.empty()) {
+        Logger::error(problem);
         return 1;
     }
+    adb = adb.pinned();
     DeviceInfo info = adb.queryDeviceInfo();
     std::cout << "Serial:        " << info.serial << "\n";
     std::cout << "Manufacturer:  " << info.manufacturer << "\n";
@@ -148,10 +149,11 @@ int cmdInfo(const std::string& serial) {
 int cmdListPackages(const std::string& serial, bool includeSystem, bool asJson) {
     if (!ensureAdbAvailable()) return 1;
     AdbClient adb(serial);
-    if (!adb.isConnected()) {
-        Logger::error("No connected and authorized device found.");
+    if (std::string problem = adb.connectionProblem(); !problem.empty()) {
+        Logger::error(problem);
         return 1;
     }
+    adb = adb.pinned();
     auto packages = adb.listPackages(includeSystem);
     adb.resolveApkPaths(packages); // Fill in split APKs so the counts below are real.
 
@@ -382,6 +384,10 @@ int cmdGui(const std::vector<std::string>& args) {
         }
     }
 
+    if (options.port < 0 || options.port > 65535) {
+        Logger::error("--port must be between 0 and 65535.");
+        return 2;
+    }
     if (options.scanDepth < 0) {
         Logger::error("--scan-depth cannot be negative.");
         return 2;
@@ -508,7 +514,7 @@ int Cli::run(int argc, char** argv) {
         if (command == "gui") return cmdGui(rest);
 
         Logger::error("Unknown command: " + command);
-        std::cout << kUsage;
+        std::cerr << kUsage;
         return 2;
     } catch (const std::exception& e) {
         Logger::error(e.what());

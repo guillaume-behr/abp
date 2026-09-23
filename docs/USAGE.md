@@ -46,8 +46,10 @@ Root access:   yes (su binary available)
 ```
 
 `-s SERIAL` targets a specific device when more than one is connected;
-otherwise `abp` uses whichever device `adb` picks by default (fails if
-more than one is connected and no serial is given).
+otherwise `abp` uses the one ready device. With several connected and no
+serial given, every command (`info`, `list-packages`, `backup`,
+`restore`) stops up front and lists their serials, and a device that is
+unauthorized or offline is reported as such rather than as missing.
 
 ## `abp list-packages [-s SERIAL] [--system] [--json]`
 

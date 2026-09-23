@@ -109,19 +109,23 @@ void RootBackend::restoreAppData(const AdbClient& adb, const fs::path& backupDir
         std::string owner =
             adb.shellText(asRoot("stat -c '%u:%g' " + dataDirArg + " 2>/dev/null"), &statOk);
 
-        std::string extractCmd =
-            asRoot("mkdir -p " + dataDirArg + " && tar -xzf - -C /data/data 2>/dev/null");
+        // No data directory means the package is not installed (its APK was
+        // not restored, or failed to install). Extracting anyway would leave
+        // a root-owned /data/data/<pkg> that no app UID can use, and that the
+        // package manager then trips over when the app is installed later.
+        if (!statOk || owner.empty() || owner.find(':') == std::string::npos) {
+            entry.error = "app is not installed on the device, so its data cannot be restored "
+                          "(restore its APK too, or install it first)";
+            continue;
+        }
+
+        std::string extractCmd = asRoot("tar -xzf - -C /data/data 2>/dev/null");
         if (!adb.shellFromFile(extractCmd, archivePath.string())) {
             entry.error = "failed to extract app data archive on device";
             continue;
         }
 
-        if (statOk && !owner.empty()) {
-            adb.shell(asRoot("chown -R " + strutil::shellQuote(owner) + " " + dataDirArg + " 2>/dev/null"));
-        } else {
-            Logger::warn("Could not determine target UID for " + entry.name +
-                         "; restored data may have the wrong owner until the app is opened.");
-        }
+        adb.shell(asRoot("chown -R " + strutil::shellQuote(owner) + " " + dataDirArg + " 2>/dev/null"));
         adb.shell(asRoot("restorecon -R " + dataDirArg + " 2>/dev/null"));
     }
 }

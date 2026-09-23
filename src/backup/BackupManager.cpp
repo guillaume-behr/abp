@@ -246,12 +246,11 @@ BackupSummary BackupManager::runBackup(const BackupOptions& options) {
     summary.outputDir = options.outputDir;
 
     AdbClient adb(options.serial);
-    if (!adb.isConnected()) {
-        summary.messages.push_back("No connected and authorized device found" +
-                                    (options.serial.empty() ? std::string() : " with serial '" + options.serial + "'") +
-                                    ". Run 'abp devices' to check.");
+    if (std::string problem = adb.connectionProblem(); !problem.empty()) {
+        summary.messages.push_back(problem);
         return summary;
     }
+    adb = adb.pinned();
 
     Logger::info("Querying device...");
     DeviceInfo device = adb.queryDeviceInfo();
@@ -293,14 +292,22 @@ BackupSummary BackupManager::runBackup(const BackupOptions& options) {
     Logger::info("Found " + std::to_string(packages.size()) + " package(s) to back up.");
 
     if (packages.empty()) {
-        summary.messages.push_back("No packages matched the current selection, so there is nothing to back up. "
-                                    "Check --only/--exclude, or pass --system to include system apps.");
-        return summary;
+        // Nothing per-app to capture is only fatal when there is nothing else
+        // either, or when the user named packages and none of them matched.
+        // A freshly reset phone has no third-party apps at all, and its photos
+        // must still be backed up.
+        const bool otherCaptures = options.includeSharedStorage || !options.filesystemPaths.empty();
+        if (!options.onlyPackages.empty() || !otherCaptures) {
+            summary.messages.push_back("No packages matched the current selection, so there is nothing to back up. "
+                                        "Check --only/--exclude, or pass --system to include system apps.");
+            return summary;
+        }
+        Logger::warn("No packages matched the current selection; backing up only shared storage and device paths.");
     }
 
     if (options.includeApks) {
         // Split APKs need `pm path`; resolve them for the selected packages
-        // only, in one on-device pass.
+        // only, in as few on-device passes as possible.
         adb.resolveApkPaths(packages);
     }
 
@@ -311,12 +318,12 @@ BackupSummary BackupManager::runBackup(const BackupOptions& options) {
         manifest.packages.push_back(std::move(entry));
     }
 
-    if (options.includeApks) {
+    if (options.includeApks && !packages.empty()) {
         Logger::info("Extracting APKs...");
         extractApks(adb, options.outputDir, packages, manifest);
     }
 
-    if (options.includeAppData) {
+    if (options.includeAppData && !packages.empty()) {
         Logger::info("Backing up app data...");
         backend->backupAppData(adb, options.outputDir, packages, manifest);
     }
@@ -324,6 +331,9 @@ BackupSummary BackupManager::runBackup(const BackupOptions& options) {
     if (options.includeSharedStorage) {
         Logger::info("Backing up shared storage...");
         summary.sharedStorageIncluded = backend->backupSharedStorage(adb, options.outputDir, manifest);
+        if (!summary.sharedStorageIncluded) {
+            Logger::warn("Shared storage (/sdcard) could not be captured; the backup does not include it.");
+        }
     }
 
     if (!options.filesystemPaths.empty()) {
@@ -383,12 +393,11 @@ RestoreSummary BackupManager::runRestore(const RestoreOptions& options) {
     RestoreSummary summary;
 
     AdbClient adb(options.serial);
-    if (!adb.isConnected()) {
-        summary.messages.push_back("No connected and authorized device found" +
-                                    (options.serial.empty() ? std::string() : " with serial '" + options.serial + "'") +
-                                    ". Run 'abp devices' to check.");
+    if (std::string problem = adb.connectionProblem(); !problem.empty()) {
+        summary.messages.push_back(problem);
         return summary;
     }
+    adb = adb.pinned();
 
     fs::path manifestPath = options.inputDir / "manifest.json";
     std::error_code manifestEc;

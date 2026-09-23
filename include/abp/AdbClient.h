@@ -37,8 +37,24 @@ public:
 
     const std::string& serial() const { return serial_; }
 
-    /// True if this serial appears in `adb devices` with state "device".
+    /// True if adb commands issued through this client will reach exactly one
+    /// ready device: the pinned serial is listed with state "device", or --
+    /// with no serial pinned -- exactly one device is ready. Equivalent to
+    /// connectionProblem().empty().
     bool isConnected() const;
+
+    /// Explains, in a sentence fit to show the user, why this client cannot
+    /// talk to a device right now (none connected, unauthorized, offline,
+    /// several connected with no serial chosen, ...). Empty when it can.
+    std::string connectionProblem() const;
+
+    /// A client pinned to the device this one resolves to: itself when a
+    /// serial is already set, otherwise the one ready device. adb's own
+    /// default counts offline and unauthorized devices too, so an unpinned
+    /// command can fail with "more than one device" even when only one is
+    /// usable; pinning the serial sidesteps that. Call once
+    /// connectionProblem() is empty.
+    AdbClient pinned() const;
 
     /// Runs `adb shell <command>`, where `command` is one fully-formed,
     /// already-quoted shell command string.
@@ -122,6 +138,14 @@ public:
 
 private:
     std::vector<std::string> baseArgs() const;
+
+    /// Runs `snippets` -- self-contained shell fragments, each ending in ';'
+    /// -- on the device in as few `adb shell` calls as the command-line limit
+    /// allows, and returns their concatenated stdout. One call per snippet
+    /// would cost a round trip each; one call for all of them can exceed what
+    /// adb accepts (the host protocol caps a request at 64 KiB, and adbd
+    /// before Android 7 at 4 KiB), which fails the whole batch.
+    std::string runShellBatches(const std::vector<std::string>& snippets) const;
 
     std::string serial_;
 };

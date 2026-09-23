@@ -212,3 +212,22 @@ ABP_TEST(manifest_older_versions_have_no_filesystem_captures) {
     Manifest v1 = Manifest::fromJson(R"({"format_version": 1, "mode": "standard"})");
     ABP_CHECK_EQ(v1.filesystemCaptures.size(), 0u);
 }
+
+ABP_TEST(manifest_rejects_a_document_that_is_not_an_object) {
+    for (const char* text : {"[]", "42", "\"manifest\"", "null"}) {
+        bool threw = false;
+        try {
+            Manifest::fromJson(text);
+        } catch (const std::exception&) {
+            threw = true;
+        }
+        ABP_CHECK(threw);
+    }
+}
+
+ABP_TEST(manifest_skips_package_entries_that_are_not_objects) {
+    Manifest manifest = Manifest::fromJson(
+        R"({"format_version": 3, "mode": "root", "packages": [42, {"name": "com.example.app"}, "junk"]})");
+    ABP_CHECK_EQ(manifest.packages.size(), 1u);
+    ABP_CHECK_EQ(manifest.packages[0].name, "com.example.app");
+}

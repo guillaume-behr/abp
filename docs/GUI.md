@@ -41,7 +41,8 @@ subcommands.
 - **Devices** — everything `adb devices -l` can see, with model, Android
   version and root status. Pick one; backups and restores target it.
 - **Back up** — choose an output directory, what to capture (APKs, app
-  data, shared storage, system apps), which backend to use, and
+  data, shared storage, system apps, and optionally every device
+  partition as with `--all-files`), which backend to use, and
   optionally an explicit package list pulled live from the device. The
   same options as `abp backup`, with a confirmation step before anything
   runs.
@@ -51,8 +52,10 @@ subcommands.
   backup is being restored onto a device without root.
 - **Explore backups** — scans a folder for directories containing a
   `manifest.json` and lists what each one holds: device, capture date,
-  backend, per-package archive sizes and checksums, per-package errors,
-  and a file browser over the backup directory itself. No device needed.
+  backend, per-package archive sizes and how each package's data was
+  captured (root tar, `run-as` or legacy `adb backup`), per-package
+  errors, any raw device-path captures and whether they are complete, and
+  a file browser over the backup directory itself. No device needed.
 
 While a backup or restore runs, its log streams into a drawer at the
 bottom of the page — the same messages the CLI prints, plus the final
@@ -121,11 +124,39 @@ optional and defaults to the same thing the CLI does:
   "include_system": false,
   "mode": "auto",
   "only": ["com.example.one"],
-  "exclude": []
+  "exclude": [],
+  "all_files": false,
+  "pull_paths": ["/data/media"]
 }
 ```
 
-A finished job carries its summary in `job.result`. For a restore that is:
+`all_files` and `pull_paths` are the API's `--all-files` and
+`--pull-path`. A path `abp` refuses to pull (`/`, `/proc`, a relative
+path, ...) fails the request with `400` before anything runs.
+
+A finished job carries its summary in `job.result`. For a backup that is:
+
+```json
+{
+  "success": true,
+  "mode": "standard",
+  "package_count": 42,
+  "packages_with_data": 30,
+  "packages_with_errors": 2,
+  "packages_via_root_tar": 0,
+  "packages_via_run_as": 4,
+  "packages_via_legacy_backup": 26,
+  "shared_storage_included": true,
+  "filesystem_capture_count": 0,
+  "filesystem_partial_count": 0,
+  "total_bytes": 123456789,
+  "total_size_human": "117.74 MB",
+  "output_dir": "/home/me/abp-backups/pixel",
+  "messages": []
+}
+```
+
+and for a restore:
 
 ```json
 {
@@ -134,6 +165,7 @@ A finished job carries its summary in `job.result`. For a restore that is:
   "packages_failed": 1,
   "packages_skipped": 3,
   "shared_storage_restored": true,
+  "filesystem_captures_present": 0,
   "messages": []
 }
 ```
@@ -145,4 +177,6 @@ neither restored nor failed; see the restore summary section of
 
 Errors come back as `{"error": "..."}` with a meaningful status code
 (`400` bad request, `403` bad token or sandbox escape, `404` unknown
-device or backup, `409` a job is already running).
+device or backup, `409` a job is already running). When a device cannot
+be used, the error says why: not connected, unauthorized, offline, or
+several devices connected with no `serial` chosen.

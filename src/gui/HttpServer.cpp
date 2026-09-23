@@ -4,6 +4,7 @@
 #include <cerrno>
 #include <csignal>
 #include <cstring>
+#include <fcntl.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <sys/time.h>
@@ -177,6 +178,27 @@ void sendResponse(int fd, const Response& response) {
     writeAll(fd, response.body.data(), response.body.size());
 }
 
+/// Marks `fd` close-on-exec. The GUI forks adb for every device operation,
+/// and the first of those typically starts the adb *server*, a daemon that
+/// outlives abp. Without this it would inherit the listening socket and keep
+/// the port bound after abp exits -- so the next `abp gui` fails with
+/// "address already in use" -- and hold open every client connection that
+/// happened to be live at the time.
+void setCloseOnExec(int fd) {
+    int flags = ::fcntl(fd, F_GETFD);
+    if (flags != -1) ::fcntl(fd, F_SETFD, flags | FD_CLOEXEC);
+}
+
+int acceptCloseOnExec(int listenFd) {
+#if defined(__linux__)
+    return ::accept4(listenFd, nullptr, nullptr, SOCK_CLOEXEC);
+#else
+    int fd = ::accept(listenFd, nullptr, nullptr);
+    if (fd >= 0) setCloseOnExec(fd);
+    return fd;
+#endif
+}
+
 void setSocketTimeout(int fd) {
     timeval timeout{};
     timeout.tv_sec = kSocketTimeoutSeconds;
@@ -281,6 +303,7 @@ bool HttpServer::listen(const std::string& host, int port, std::string* error) {
 
     int fd = ::socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) return fail("Could not create socket");
+    setCloseOnExec(fd);
 
     int enable = 1;
     ::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(enable));
@@ -325,7 +348,7 @@ void HttpServer::serveForever(Handler handler) {
         int fd = listenFd_;
         if (fd < 0) break;
 
-        int client = ::accept(fd, nullptr, nullptr);
+        int client = acceptCloseOnExec(fd);
         if (client < 0) {
             if (errno == EINTR) continue;
             if (stopping_) break;

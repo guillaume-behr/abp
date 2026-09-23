@@ -1,5 +1,7 @@
 #include "abp/Manifest.h"
 
+#include <stdexcept>
+
 #include "abp/FsUtil.h"
 #include "abp/Json.h"
 
@@ -165,6 +167,12 @@ std::string Manifest::toJson() const {
 
 Manifest Manifest::fromJson(const std::string& text) {
     JsonValue root = JsonValue::parse(text);
+    // Every field below is read with get(), which yields null on anything that
+    // is not an object -- so "[]" or "42" would otherwise load as an empty,
+    // perfectly valid-looking manifest instead of being reported as corrupt.
+    if (!root.isObject()) {
+        throw std::runtime_error("manifest.json is not a JSON object");
+    }
 
     Manifest manifest;
     manifest.formatVersion = static_cast<int>(root.get("format_version").asInt(1));
@@ -186,11 +194,15 @@ Manifest Manifest::fromJson(const std::string& text) {
     // get(...).items() directly would walk a destroyed temporary.
     JsonValue capturesJson = root.get("filesystem_captures");
     for (const auto& captureJson : capturesJson.items()) {
+        if (!captureJson.isObject()) continue;
         manifest.filesystemCaptures.push_back(filesystemCaptureFromJson(captureJson));
     }
 
     JsonValue packagesJson = root.get("packages");
     for (const auto& pkgJson : packagesJson.items()) {
+        // A non-object entry carries no package at all; turning it into a
+        // nameless entry would only surface later as a phantom package.
+        if (!pkgJson.isObject()) continue;
         manifest.packages.push_back(packageFromJson(pkgJson, manifest.mode));
     }
 

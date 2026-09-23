@@ -351,3 +351,126 @@ ABP_TEST(adb_as_package_quotes_the_package_name) {
     ABP_CHECK_EQ(AdbClient::asPackage("com.example.app", "tar -czf - ."),
                  "run-as 'com.example.app' tar -czf - .");
 }
+
+ABP_TEST(adb_connection_problem_is_empty_for_one_ready_device) {
+    FakeAdb fake(kDevicesScript);
+    ABP_CHECK_EQ(AdbClient("").connectionProblem(), std::string());
+    ABP_CHECK_EQ(AdbClient("GOODDEV").connectionProblem(), std::string());
+}
+
+ABP_TEST(adb_refuses_to_guess_between_several_ready_devices) {
+    // adb itself rejects every command with "more than one device/emulator"
+    // here, so abp must ask for a serial instead of pressing on.
+    FakeAdb fake(R"SH(
+case "$1" in
+  devices)
+    echo "List of devices attached"
+    echo "PHONE1                 device model:One"
+    echo "PHONE2                 device model:Two"
+    exit 0;;
+esac
+exit 1
+)SH");
+
+    const std::string problem = AdbClient("").connectionProblem();
+    ABP_CHECK(problem.find("--serial") != std::string::npos);
+    ABP_CHECK(problem.find("PHONE1") != std::string::npos);
+    ABP_CHECK(problem.find("PHONE2") != std::string::npos);
+    ABP_CHECK(!AdbClient("").isConnected());
+    ABP_CHECK(AdbClient("PHONE2").isConnected());
+}
+
+ABP_TEST(adb_connection_problem_explains_unusable_and_missing_devices) {
+    FakeAdb fake(R"SH(
+case "$1" in
+  devices)
+    echo "List of devices attached"
+    echo "LOCKED                 unauthorized"
+    exit 0;;
+esac
+exit 1
+)SH");
+
+    ABP_CHECK(AdbClient("").connectionProblem().find("Allow USB debugging") != std::string::npos);
+    ABP_CHECK(AdbClient("LOCKED").connectionProblem().find("unauthorized") != std::string::npos);
+    ABP_CHECK(AdbClient("ELSEWHERE").connectionProblem().find("'ELSEWHERE'") != std::string::npos);
+}
+
+ABP_TEST(adb_resolve_apk_paths_keeps_answers_when_the_last_package_fails) {
+    // The batch's exit status is that of its final `pm path`. A package that
+    // vanished mid-run must not discard the answers for all the others.
+    FakeAdb fake(R"SH(
+case "$*" in
+  *"@@abp:"*)
+    echo "@@abp:com.example.app"
+    echo "package:/data/app/app/base.apk"
+    echo "package:/data/app/app/split_config.arm64_v8a.apk"
+    echo "@@abp:com.example.gone"
+    exit 1;;
+esac
+exit 1
+)SH");
+
+    PackageInfo app;
+    app.name = "com.example.app";
+    app.apkPaths = {"/data/app/app/base.apk"};
+    PackageInfo gone;
+    gone.name = "com.example.gone";
+    gone.apkPaths = {"/data/app/gone/base.apk"};
+    std::vector<PackageInfo> packages{app, gone};
+
+    AdbClient("SERIAL").resolveApkPaths(packages);
+
+    ABP_CHECK_EQ(packages[0].apkPaths.size(), 2u);
+    ABP_CHECK_EQ(packages[1].apkPaths.size(), 1u);
+    ABP_CHECK_EQ(packages[1].apkPaths[0], "/data/app/gone/base.apk");
+}
+
+ABP_TEST(adb_splits_long_package_scripts_across_several_shell_calls) {
+    // One shell call per package is too slow, but one call for every package
+    // on a device with a few hundred can exceed what adb accepts. The fake
+    // answers `pm path` for whatever the script it was handed asks about,
+    // rejects any script over 4 KiB, and counts its calls.
+    FakeAdb fake(R"SH(
+shift $(( $# - 1 ))
+script="$1"
+echo x >> "$(dirname "$0")/calls"
+if [ ${#script} -gt 4096 ]; then echo "service string too long" >&2; exit 1; fi
+printf '%s\n' "$script" | tr ';' '\n' | sed -n "s/^ *echo '@@abp:\(.*\)'.*/\1/p" | while read -r name; do
+  echo "@@abp:$name"
+  echo "package:/data/app/$name/base.apk"
+  echo "package:/data/app/$name/split_extra.apk"
+done
+exit 0
+)SH");
+
+    std::vector<PackageInfo> packages;
+    for (int i = 0; i < 150; ++i) {
+        PackageInfo pkg;
+        pkg.name = "com.example.some.rather.long.package.name.number" + std::to_string(i);
+        packages.push_back(pkg);
+    }
+
+    AdbClient("SERIAL").resolveApkPaths(packages);
+
+    for (const auto& pkg : packages) {
+        ABP_CHECK_EQ(pkg.apkPaths.size(), 2u);
+        ABP_CHECK_EQ(pkg.apkPaths[0], "/data/app/" + pkg.name + "/base.apk");
+    }
+
+    const fs::path calls = fs::path(AdbClient::adbPath()).parent_path() / "calls";
+    std::ifstream in(calls);
+    std::string line;
+    int callCount = 0;
+    while (std::getline(in, line)) ++callCount;
+    ABP_CHECK(callCount > 1);
+    ABP_CHECK(callCount < 20);
+}
+
+ABP_TEST(adb_pins_the_one_ready_device_when_no_serial_is_given) {
+    // adb counts the offline device too and would refuse an unpinned command,
+    // so the client must name the ready one explicitly.
+    FakeAdb fake(kDevicesScript);
+    ABP_CHECK_EQ(AdbClient("").pinned().serial(), std::string("GOODDEV"));
+    ABP_CHECK_EQ(AdbClient("OFFLINEDEV").pinned().serial(), std::string("OFFLINEDEV"));
+}

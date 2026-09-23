@@ -14,6 +14,31 @@ std::string& adbPathStorage() {
     return path;
 }
 
+/// Upper bound on one batched `adb shell` command string. Well under the
+/// 4 KiB payload limit of pre-Android-7 adbd, leaving room for the service
+/// prefix adb adds in front of the command.
+constexpr size_t kMaxShellScriptBytes = 3500;
+
+/// What to tell the user about a device adb lists but cannot use yet.
+std::string explainDeviceState(const DeviceInfo& device) {
+    const std::string& serial = device.serial;
+    if (device.state == "unauthorized") {
+        return "Device " + serial + " is unauthorized: unlock it and accept the 'Allow USB debugging?' prompt, "
+               "then try again.";
+    }
+    if (device.state == "offline") {
+        return "Device " + serial + " is offline: reconnect the USB cable (or run 'adb reconnect') and try again.";
+    }
+    if (device.state == "no permissions") {
+        return "adb has no permission to open device " + serial +
+               " (on Linux this usually means a missing udev rule for it).";
+    }
+    if (device.state == "authorizing" || device.state == "connecting") {
+        return "Device " + serial + " is still " + device.state + "; wait a moment and try again.";
+    }
+    return "Device " + serial + " is in '" + device.state + "' state, not booted into Android with USB debugging.";
+}
+
 } // namespace
 
 AdbClient::AdbClient(std::string serial) : serial_(std::move(serial)) {}
@@ -84,17 +109,44 @@ std::vector<DeviceInfo> AdbClient::listConnectedDevices() {
     return devices;
 }
 
-bool AdbClient::isConnected() const {
-    for (const auto& device : listConnectedDevices()) {
-        if (!serial_.empty()) {
-            if (device.serial == serial_) return device.isReady();
-            continue;
+bool AdbClient::isConnected() const { return connectionProblem().empty(); }
+
+std::string AdbClient::connectionProblem() const {
+    const std::vector<DeviceInfo> devices = listConnectedDevices();
+
+    if (!serial_.empty()) {
+        for (const auto& device : devices) {
+            if (device.serial != serial_) continue;
+            return device.isReady() ? std::string() : explainDeviceState(device);
         }
-        // No serial pinned: any ready device will do. Keep looking past
-        // offline/unauthorized entries instead of judging by the first one.
-        if (device.isReady()) return true;
+        return "No device with serial '" + serial_ + "' is connected. Run 'abp devices' to see what adb can reach.";
     }
-    return false;
+
+    // No serial pinned: with several ready devices there is no telling which
+    // one the user meant, and adb itself refuses every unpinned command
+    // ("more than one device/emulator"), so that is caught here rather than
+    // surfacing as a string of odd failures. Unusable entries are not
+    // counted: callers go on to pin the one ready device (see pinned()).
+    std::vector<std::string> ready;
+    for (const auto& device : devices) {
+        if (device.isReady()) ready.push_back(device.serial);
+    }
+    if (ready.size() == 1) return std::string();
+    if (ready.size() > 1) {
+        return std::to_string(ready.size()) + " devices are connected (" + strutil::join(ready, ", ") +
+               "); choose one with -s/--serial.";
+    }
+    if (!devices.empty()) return explainDeviceState(devices.front());
+    return "No device found. Connect it over USB, enable USB debugging in Developer options, and accept the "
+           "'Allow USB debugging?' prompt.";
+}
+
+AdbClient AdbClient::pinned() const {
+    if (!serial_.empty()) return *this;
+    for (const auto& device : listConnectedDevices()) {
+        if (device.isReady()) return AdbClient(device.serial);
+    }
+    return *this;
 }
 
 ProcessResult AdbClient::shell(const std::string& command) const {
@@ -332,30 +384,47 @@ std::string AdbClient::asPackage(const std::string& packageName, const std::stri
     return "run-as " + strutil::shellQuote(packageName) + " " + command;
 }
 
+std::string AdbClient::runShellBatches(const std::vector<std::string>& snippets) const {
+    std::string output;
+    std::string script;
+    auto flush = [&]() {
+        if (script.empty()) return;
+        // A batch's exit status is that of its last command, which says
+        // nothing about the ones before it, so its output is kept either way.
+        output += shell(script).stdOut;
+        if (!output.empty() && output.back() != '\n') output.push_back('\n');
+        script.clear();
+    };
+
+    for (const auto& snippet : snippets) {
+        if (!script.empty() && script.size() + snippet.size() > kMaxShellScriptBytes) flush();
+        script += snippet;
+    }
+    flush();
+    return output;
+}
+
 std::vector<std::string> AdbClient::packagesSupportingRunAs(const std::vector<std::string>& packageNames) const {
     std::vector<std::string> supported;
     if (packageNames.empty()) return supported;
 
     // `run-as <pkg> id -u` succeeds only for a debuggable package that is
     // installed for the current user. Probing them one at a time would cost an
-    // adb round trip each, so the whole probe runs as one on-device script
-    // that prints a marker line per package that answered.
+    // adb round trip each, so the probe runs as on-device scripts that print a
+    // marker line per package that answered.
     static const char* kMarker = "@@abp-runas:";
 
-    std::string script;
-    script.reserve(packageNames.size() * 48);
+    std::vector<std::string> snippets;
+    snippets.reserve(packageNames.size());
     for (const auto& name : packageNames) {
         if (!strutil::isValidPackageName(name)) continue;
         const std::string quoted = strutil::shellQuote(name);
-        script += "run-as " + quoted + " id -u >/dev/null 2>&1 && echo " +
-                  strutil::shellQuote(std::string(kMarker) + name) + "; ";
+        snippets.push_back("run-as " + quoted + " id -u >/dev/null 2>&1 && echo " +
+                           strutil::shellQuote(std::string(kMarker) + name) + "; ");
     }
-    if (script.empty()) return supported;
+    if (snippets.empty()) return supported;
 
-    bool ok = false;
-    const std::string output = shellText(script, &ok);
-    // The script's own exit status is that of its last command, which says
-    // nothing about the packages before it, so the output is parsed either way.
+    const std::string output = runShellBatches(snippets);
 
     for (const auto& rawLine : strutil::split(output, '\n')) {
         const std::string line = strutil::trim(rawLine);
@@ -377,22 +446,23 @@ void AdbClient::resolveApkPaths(std::vector<PackageInfo>& packages) const {
 
     // Asking `pm path` per package costs one adb round trip each, which is
     // tens of seconds on a device with a few hundred apps. Instead run the
-    // whole loop in a single on-device shell, delimiting each package's
+    // loop in as few on-device shells as possible, delimiting each package's
     // output with a marker line.
     static const char* kMarker = "@@abp:";
 
-    std::string script;
-    script.reserve(packages.size() * 32);
+    std::vector<std::string> snippets;
+    snippets.reserve(packages.size());
     for (const auto& pkg : packages) {
         if (!strutil::isValidPackageName(pkg.name)) continue;
-        script += "echo " + strutil::shellQuote(std::string(kMarker) + pkg.name) + "; pm path " +
-                  strutil::shellQuote(pkg.name) + " 2>/dev/null; ";
+        snippets.push_back("echo " + strutil::shellQuote(std::string(kMarker) + pkg.name) + "; pm path " +
+                           strutil::shellQuote(pkg.name) + " 2>/dev/null; ");
     }
-    if (script.empty()) return;
+    if (snippets.empty()) return;
 
-    bool ok = false;
-    std::string output = shellText(script, &ok);
-    if (!ok) return;
+    // Parsed whatever the exit status: it is that of the last `pm path`, so a
+    // single package uninstalled mid-run would otherwise throw away the
+    // answers for every package before it.
+    const std::string output = runShellBatches(snippets);
 
     // Index the reply by package name, then apply it. A package the device
     // did not answer for keeps the base path found by listPackages().

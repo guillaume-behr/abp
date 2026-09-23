@@ -203,3 +203,33 @@ ABP_TEST(process_redirects_correctly_when_standard_streams_are_closed) {
     ABP_CHECK_EQ(got, static_cast<ssize_t>(1));
     ABP_CHECK_EQ(answer, 'y');
 }
+
+ABP_TEST(process_gives_children_an_empty_stdin_when_none_is_supplied) {
+    // A child that was given no input must not read abp's own stdin: `adb
+    // shell` forwards whatever it reads to the device, and a background abp
+    // reading its terminal is stopped by SIGTTIN. Stand in for the terminal
+    // with a pipe that has a line waiting for each child and is never closed:
+    // a child that inherited it would read "leaked" instead of end-of-file.
+    int fakeStdin[2];
+    ABP_CHECK(::pipe(fakeStdin) == 0);
+    const char waiting[] = "leaked\nleaked\n";
+    ABP_CHECK_EQ(::write(fakeStdin[1], waiting, sizeof(waiting) - 1), static_cast<ssize_t>(sizeof(waiting) - 1));
+
+    const int savedStdin = ::dup(STDIN_FILENO);
+    ABP_CHECK(savedStdin >= 0);
+    ::dup2(fakeStdin[0], STDIN_FILENO);
+
+    ProcessResult r = Process::run({"sh", "-c", "read line; echo \"[$line]\""});
+
+    TempFile out("empty_stdin.txt");
+    ProcessResult toFile = Process::runToFile({"sh", "-c", "read line; echo \"[$line]\""}, out.path());
+
+    ::dup2(savedStdin, STDIN_FILENO);
+    ::close(savedStdin);
+    ::close(fakeStdin[0]);
+    ::close(fakeStdin[1]);
+
+    ABP_CHECK_EQ(r.stdOut, std::string("[]\n"));
+    ABP_CHECK(!toFile.spawnFailed);
+    ABP_CHECK_EQ(readAll(out.path()), std::string("[]\n"));
+}

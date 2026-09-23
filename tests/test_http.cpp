@@ -1,4 +1,10 @@
 #include "abp/HttpServer.h"
+
+#include <fcntl.h>
+#include <sys/stat.h>
+
+#include <string>
+
 #include "TestFramework.h"
 
 using namespace abp;
@@ -53,4 +59,28 @@ ABP_TEST(request_params_are_decoded) {
     ABP_CHECK_EQ(request.param("serial"), std::string("ABC123"));
     ABP_CHECK_EQ(request.param("sub"), std::string("a b"));
     ABP_CHECK_EQ(request.param("absent", "fallback"), std::string("fallback"));
+}
+
+ABP_TEST(http_server_sockets_are_not_inherited_by_child_processes) {
+    // The GUI spawns adb, and adb's first run forks a long-lived server. A
+    // listening socket without close-on-exec follows it into that daemon and
+    // keeps the port bound after abp exits.
+    auto socketsWithoutCloexec = [] {
+        int count = 0;
+        for (int fd = 0; fd < 1024; ++fd) {
+            struct stat info {};
+            if (::fstat(fd, &info) != 0 || !S_ISSOCK(info.st_mode)) continue;
+            int flags = ::fcntl(fd, F_GETFD);
+            if (flags != -1 && !(flags & FD_CLOEXEC)) ++count;
+        }
+        return count;
+    };
+
+    const int before = socketsWithoutCloexec();
+    HttpServer server;
+    std::string error;
+    ABP_CHECK(server.listen("127.0.0.1", 0, &error));
+    ABP_CHECK(server.boundPort() > 0);
+    ABP_CHECK_EQ(socketsWithoutCloexec(), before);
+    server.stop();
 }

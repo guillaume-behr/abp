@@ -78,8 +78,65 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   shape. An unrecognised method from a future abp reads as `none`
   rather than being mistaken for one this build can restore.
 
+- The GUI's **Back up** view can also pull every device partition
+  (`--all-files`), and the API accepts `all_files` / `pull_paths`. The
+  **Explore** view shows how each package's data was captured and lists
+  raw device-path captures with whether each is complete; job summaries
+  now include the same per-method and device-path counts the CLI prints.
+- Clear device diagnostics: `info`, `list-packages`, `backup`, `restore`
+  and the GUI now say *why* a device cannot be used -- unauthorized,
+  offline, no permissions, or several devices connected with no serial
+  chosen (which adb would otherwise reject command by command). When only
+  one listed device is usable, abp pins its serial, because adb's own
+  default also counts offline and unauthorized devices and refuses an
+  unpinned command next to them.
+
 ### Fixed
 
+- Child processes that are given no input now read `/dev/null` instead of
+  abp's own stdin. `adb shell` forwards its stdin to the device, so it
+  could swallow keystrokes, and under `abp gui &` its first read of the
+  terminal stopped it with SIGTTIN, hanging the job.
+- The GUI's listening and client sockets are now close-on-exec. The adb
+  server that the first adb call starts inherited the listening socket,
+  so after abp exited the port stayed bound and the next `abp gui` failed
+  with "address already in use".
+- Split-APK resolution no longer throws away every package's answer when
+  the *last* package's `pm path` fails (for instance, it was uninstalled
+  mid-backup), which silently dropped split APKs from the backup.
+- The on-device scripts that resolve split APKs and probe `run-as` are
+  sent in batches below adb's command-length limits. One script for
+  every package overran the 64 KiB host-protocol limit with `--system`
+  on a typical phone (and the 4 KiB limit of pre-Android-7 adbd much
+  sooner), failing the whole batch.
+- `sha256HexFile` fails on a read error instead of returning the digest
+  of whatever was read before it, so a truncated read can no longer
+  verify an archive (a directory used to hash as the empty string).
+- A `manifest.json` that is valid JSON but not an object (`[]`, `42`) is
+  rejected as corrupt instead of loading as an empty backup, and
+  non-object package entries are skipped instead of becoming nameless
+  phantom packages.
+- A backup of a device with no matching apps (a freshly reset phone)
+  still captures shared storage and `--all-files` paths instead of
+  aborting; it only fails when `--only` named packages that all missed,
+  or when there is nothing else to capture.
+- Standard-mode shared storage keeps a partial `adb pull` of `/sdcard`
+  (adb stops at the first unreadable file) with a warning, instead of
+  reporting it as not captured while leaving the copied gigabytes on
+  disk, unlisted. It is now pulled with timestamps preserved.
+- A root-mode restore skips, and reports, a package that is not
+  installed on the device instead of unpacking its data into a
+  `/data/data/<pkg>` the package manager never created.
+- A shared-storage capture that fails is now reported instead of the
+  summary just saying "skipped".
+- Scanning or browsing backups no longer aborts on an I/O error partway
+  through a directory.
+- GUI: overlapping job polls no longer print log lines twice, pressing
+  Escape in a confirmation dialog counts as "Cancel", IPv6 `Host`
+  headers with a port are parsed correctly, and the browser is opened
+  with `open` on macOS.
+- `abp gui --port` rejects values outside 0-65535, and an unknown
+  command prints the usage to stderr.
 - **Restoring shared storage from a standard-mode backup nested every
   folder inside itself.** `adb push` follows `cp`'s rule — when the
   destination already exists as a directory, the source is copied *into*
