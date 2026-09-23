@@ -26,6 +26,18 @@ bool colorEnabledFor(FILE* stream) {
 
 std::mutex g_mutex;
 Logger::Sink g_sink;
+Logger::ProgressSink g_progressSink;
+
+/// Whether a terminal progress line is currently drawn and must be erased
+/// before anything else is printed. Guarded by g_mutex.
+bool g_progressLineShown = false;
+
+void clearProgressLineLocked() {
+    if (!g_progressLineShown) return;
+    std::fputs("\r\033[K", stdout);
+    std::fflush(stdout);
+    g_progressLineShown = false;
+}
 
 const char* levelColor(LogLevel level) {
     switch (level) {
@@ -37,16 +49,17 @@ const char* levelColor(LogLevel level) {
     return "\033[0m";
 }
 
-const char* levelLabel(LogLevel level) {
+} // namespace
+
+const char* logLevelName(LogLevel level) {
     switch (level) {
         case LogLevel::Debug: return "debug";
         case LogLevel::Info:  return "info";
         case LogLevel::Warn:  return "warn";
         case LogLevel::Error: return "error";
     }
-    return "?";
+    return "info";
 }
-} // namespace
 
 void Logger::setVerbose(bool verbose) { g_verbose = verbose; }
 void Logger::setColorEnabled(bool enabled) {
@@ -56,6 +69,36 @@ void Logger::setColorEnabled(bool enabled) {
 void Logger::setSink(Sink sink) {
     std::lock_guard<std::mutex> lock(g_mutex);
     g_sink = std::move(sink);
+}
+
+void Logger::setProgressSink(ProgressSink sink) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    g_progressSink = std::move(sink);
+}
+
+void Logger::progress(const std::string& step, int done, int total, const std::string& item) {
+    ProgressSink sink;
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        sink = g_progressSink;
+    }
+    if (sink) {
+        sink(step, done, total, item);
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (isatty(fileno(stdout)) == 0 || total <= 0) return;
+    std::string line = "  [" + std::to_string(done) + "/" + std::to_string(total) + "] " + step;
+    if (!item.empty() && done < total) line += ": " + item;
+    if (line.size() > 100) line = line.substr(0, 97) + "...";
+    std::fprintf(stdout, "\r\033[K%s", line.c_str());
+    std::fflush(stdout);
+    g_progressLineShown = done < total;
+    if (!g_progressLineShown) {
+        std::fputs("\r\033[K", stdout);
+        std::fflush(stdout);
+    }
 }
 
 void Logger::log(LogLevel level, const std::string& message) {
@@ -76,18 +119,19 @@ void Logger::log(LogLevel level, const std::string& message) {
     if (sink) sink(level, message);
 
     std::lock_guard<std::mutex> lock(g_mutex);
+    clearProgressLineLocked();
     FILE* stream = (level == LogLevel::Warn || level == LogLevel::Error) ? stderr : stdout;
     const bool prefixed = level != LogLevel::Info;
 
     if (colorEnabledFor(stream)) {
         if (prefixed) {
-            std::fprintf(stream, "%s[%s]\033[0m %s\n", levelColor(level), levelLabel(level), message.c_str());
+            std::fprintf(stream, "%s[%s]\033[0m %s\n", levelColor(level), logLevelName(level), message.c_str());
         } else {
             std::fprintf(stream, "%s\n", message.c_str());
         }
     } else {
         if (prefixed) {
-            std::fprintf(stream, "[%s] %s\n", levelLabel(level), message.c_str());
+            std::fprintf(stream, "[%s] %s\n", logLevelName(level), message.c_str());
         } else {
             std::fprintf(stream, "%s\n", message.c_str());
         }

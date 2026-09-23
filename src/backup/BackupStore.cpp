@@ -4,6 +4,7 @@
 #include <stdexcept>
 #include <system_error>
 
+#include "abp/ArchiveIntegrity.h"
 #include "abp/FsUtil.h"
 
 namespace abp {
@@ -92,6 +93,41 @@ Manifest BackupStore::loadManifest(const fs::path& dir) {
                                  " -- is this an abp backup directory?");
     }
     return Manifest::readFromFile(manifestPath);
+}
+
+VerifyReport BackupStore::verify(const fs::path& dir) {
+    const Manifest manifest = loadManifest(dir);
+    VerifyReport report;
+
+    // Every path is resolved inside the backup first, so a manifest naming
+    // "../elsewhere" is reported rather than followed.
+    auto check = [&](const std::string& relative, const std::string& sha256) {
+        if (relative.empty()) return;
+        fs::path resolved;
+        if (!resolveInside(dir, relative, &resolved)) {
+            report.problems.push_back({relative, "missing"});
+            return;
+        }
+        if (sha256.empty()) {
+            ++report.unverifiable;
+        } else if (integrity::checksumMatches(resolved, sha256)) {
+            ++report.verified;
+        } else {
+            report.problems.push_back({relative, "checksum mismatch"});
+        }
+    };
+
+    for (const auto& entry : manifest.packages) {
+        for (const auto& apk : entry.apkFiles) check(apk, std::string());
+        check(entry.dataArchive, entry.dataArchiveSha256);
+        check(entry.deDataArchive, entry.deDataArchiveSha256);
+        check(entry.externalDataArchive, entry.externalDataArchiveSha256);
+    }
+    if (manifest.sharedStorageIncluded) check(manifest.sharedStorageArchive, manifest.sharedStorageArchiveSha256);
+    check(manifest.legacyAdbBackupFile, std::string());
+    for (const auto& capture : manifest.filesystemCaptures) check(capture.localPath, std::string());
+    for (const auto& item : manifest.personalDataExports) check(item.localPath, item.sha256);
+    return report;
 }
 
 bool BackupStore::resolveInside(const fs::path& backupDir, const std::string& relative, fs::path* resolved) {

@@ -1,14 +1,12 @@
 #include "abp/PersonalData.h"
 
-#include <unistd.h>
-
 #include <filesystem>
-#include <fstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "FakeAdb.h"
 #include "TestFramework.h"
 #include "abp/FsUtil.h"
 #include "abp/Json.h"
@@ -16,48 +14,11 @@
 
 using namespace abp;
 using namespace abp::personal;
+using abp::test::FakeAdb;
+using abp::test::kSkipSerial;
 namespace fs = std::filesystem;
 
 namespace {
-
-/// A fake `adb` whose shell commands are matched by the script, plus a
-/// scratch backup directory; both cleaned up on destruction.
-class PersonalFixture {
-public:
-    explicit PersonalFixture(const std::string& script) : previousPath_(AdbClient::adbPath()) {
-        static int counter = 0;
-        root_ = fs::temp_directory_path() /
-                ("abp_personal_" + std::to_string(::getpid()) + "_" + std::to_string(counter++));
-        fs::create_directories(root_ / "backup");
-        const fs::path adb = root_ / "adb";
-        std::ofstream out(adb);
-        out << "#!/bin/sh\necho \"$*\" >> \"$(dirname \"$0\")/calls.log\"\n"
-            << "[ \"$1\" = \"-s\" ] && shift 2\n"
-            << script;
-        out.close();
-        fs::permissions(adb, fs::perms::owner_all);
-        AdbClient::setAdbPath(adb.string());
-    }
-
-    ~PersonalFixture() {
-        AdbClient::setAdbPath(previousPath_);
-        std::error_code ec;
-        fs::remove_all(root_, ec);
-    }
-
-    PersonalFixture(const PersonalFixture&) = delete;
-    PersonalFixture& operator=(const PersonalFixture&) = delete;
-
-    fs::path backupDir() const { return root_ / "backup"; }
-    std::string readLog() const {
-        const fs::path log = root_ / "calls.log";
-        return fs::exists(log) ? fsutil::readTextFile(log) : std::string();
-    }
-
-private:
-    std::string previousPath_;
-    fs::path root_;
-};
 
 /// A device that answers everything: two contacts streamed as native vCards,
 /// three SMS (one with commas and a newline in its body), and a call log the
@@ -142,6 +103,8 @@ ABP_TEST(personal_builds_vcards_from_contact_data_rows) {
     ABP_CHECK(vcf.find("FN:bob@example.com\r\n") != std::string::npos); // Falls back to the email.
 }
 
+namespace {
+
 const ExportResult& resultFor(const std::vector<ExportResult>& results, const std::string& kind) {
     for (const auto& result : results) {
         if (result.kind == kind) return result;
@@ -162,8 +125,10 @@ DeviceInfo unrootedDevice() {
     return device;
 }
 
+} // namespace
+
 ABP_TEST(personal_exports_contacts_sms_and_skips_a_refused_provider) {
-    PersonalFixture fixture(kPhoneScript);
+    FakeAdb fixture(std::string(kSkipSerial) + kPhoneScript);
     Manifest manifest;
 
     auto results = exportPersonalData(AdbClient("SERIAL"), fixture.backupDir(), unrootedDevice(), manifest);
@@ -200,7 +165,7 @@ ABP_TEST(personal_exports_contacts_sms_and_skips_a_refused_provider) {
 }
 
 ABP_TEST(personal_falls_back_to_building_vcards_when_content_read_is_missing) {
-    PersonalFixture fixture(R"SH(
+    FakeAdb fixture(std::string(kSkipSerial) + R"SH(
 [ "$1" = "shell" ] || exit 1
 case "$2" in
   *"content://com.android.contacts/contacts'"*)
@@ -312,7 +277,7 @@ ABP_TEST(personal_parses_wpa_supplicant_conf) {
 }
 
 ABP_TEST(personal_exports_mms_calendar_settings_and_rooted_wifi) {
-    PersonalFixture fixture(R"SH(
+    FakeAdb fixture(std::string(kSkipSerial) + R"SH(
 if [ "$1" = "exec-out" ]; then
   case "$2" in
     *"content://mms/part/21'"*) printf 'JPEGDATA'; exit 0;;
@@ -381,7 +346,7 @@ exit 1
 }
 
 ABP_TEST(personal_restore_copies_imports_and_re_adds_wifi) {
-    PersonalFixture fixture(R"SH(
+    FakeAdb fixture(std::string(kSkipSerial) + R"SH(
 [ "$1" = "push" ] && exit 0
 case "$2" in
   "cmd wifi add-network"*) exit 0;;

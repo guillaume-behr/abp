@@ -6,6 +6,7 @@
 #include "abp/ArchiveIntegrity.h"
 #include "abp/FsUtil.h"
 #include "abp/Logger.h"
+#include "abp/Process.h"
 #include "abp/StringUtil.h"
 
 namespace abp {
@@ -73,7 +74,13 @@ void StandardBackend::backupAppData(const AdbClient& adb, const fs::path& outDir
         fsutil::ensureDirectory(outDir / "data");
     }
 
+    const int total = static_cast<int>(packages.size());
+    int done = 0;
     for (const auto& pkg : packages) {
+        // A cancel must not fall through to the legacy step below, which
+        // would ask the user to confirm a backup they just cancelled.
+        if (Process::cancelRequested()) return;
+        Logger::progress("Backing up app data", done++, total, pkg.name);
         PackageBackupEntry* entry = findPackageEntry(manifest, pkg.name);
         if (entry == nullptr) continue;
 
@@ -85,6 +92,7 @@ void StandardBackend::backupAppData(const AdbClient& adb, const fs::path& outDir
         }
         remaining.push_back(pkg.name);
     }
+    Logger::progress("Backing up app data", total, total);
 
     if (remaining.empty()) {
         Logger::info("Every selected package was captured via 'run-as'; no legacy 'adb backup' needed.");
@@ -145,6 +153,7 @@ void StandardBackend::restoreAppData(const AdbClient& adb, const fs::path& backu
 
     for (auto& entry : manifest.packages) {
         if (!entry.dataIncluded || !selected(entry.name)) continue;
+        if (Process::cancelRequested()) return;
 
         if (entry.dataCaptureMethod == DataCaptureMethod::LegacyAdbBackup) {
             anyLegacySelected = true;

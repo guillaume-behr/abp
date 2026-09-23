@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
-#include <ctime>
 #include <fstream>
 #include <functional>
 #include <iomanip>
@@ -34,15 +33,6 @@ namespace fs = std::filesystem;
 namespace {
 
 using json::JsonValue;
-
-std::string utcTimestamp() {
-    std::time_t now = std::time(nullptr);
-    std::tm utc{};
-    gmtime_r(&now, &utc);
-    char buffer[32];
-    std::strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%SZ", &utc);
-    return std::string(buffer);
-}
 
 /// Expands a leading "~" to the user's home directory, so paths typed into
 /// the GUI behave the way they do in a shell.
@@ -111,25 +101,6 @@ http::Response errorResponse(const std::string& message, int status) {
     return jsonResponse(object, status);
 }
 
-const char* levelName(LogLevel level) {
-    switch (level) {
-        case LogLevel::Debug: return "debug";
-        case LogLevel::Info: return "info";
-        case LogLevel::Warn: return "warn";
-        case LogLevel::Error: return "error";
-    }
-    return "info";
-}
-
-const char* rootMethodLabel(RootMethod method) {
-    switch (method) {
-        case RootMethod::AdbdRoot: return "adbd already running as root";
-        case RootMethod::SuBinary: return "su binary available";
-        case RootMethod::None: return "none";
-    }
-    return "none";
-}
-
 JsonValue deviceJson(const DeviceInfo& device) {
     JsonValue object = JsonValue::makeObject();
     object.set("serial", device.serial);
@@ -140,7 +111,7 @@ JsonValue deviceJson(const DeviceInfo& device) {
     object.set("sdk_int", device.sdkInt);
     object.set("ready", device.isReady());
     object.set("rooted", device.isRooted());
-    object.set("root_method", rootMethodLabel(device.root.method));
+    object.set("root_method", describeRootMethod(device.root.method));
     return object;
 }
 
@@ -198,10 +169,6 @@ JsonValue manifestJson(const Manifest& manifest) {
         item.set("data_sha256", entry.dataArchiveSha256);
         item.set("de_data_archive", entry.deDataArchive);
         item.set("de_data_bytes", entry.deDataArchiveBytes);
-        item.set("external_data_included", entry.externalDataIncluded);
-        item.set("external_data_archive", entry.externalDataArchive);
-        item.set("external_data_bytes", entry.externalDataArchiveBytes);
-        item.set("external_data_size_human", strutil::formatBytes(entry.externalDataArchiveBytes));
         item.set("error", entry.error);
         packages.push_back(item);
     }
@@ -250,6 +217,11 @@ public:
         std::string startedAt;
         std::string finishedAt;
         size_t logSize = 0;
+        bool cancelling = false;
+        std::string progressStep;
+        int progressDone = 0;
+        int progressTotal = 0;
+        std::string progressItem;
         JsonValue result;
         std::vector<std::pair<std::string, std::string>> newLines;
     };
@@ -282,15 +254,27 @@ public:
         kind_ = kind;
         target_ = target;
         state_ = "running";
-        startedAt_ = utcTimestamp();
+        startedAt_ = strutil::utcTimestamp();
         finishedAt_.clear();
         log_.clear();
         result_ = JsonValue();
         running_ = true;
         present_ = true;
+        cancelling_ = false;
+        progressStep_.clear();
+        progressDone_ = progressTotal_ = 0;
+        progressItem_.clear();
+        Process::clearCancel();
 
         thread_ = std::thread([this, work = std::move(work)]() {
-            Logger::setSink([this](LogLevel level, const std::string& message) { append(levelName(level), message); });
+            Logger::setSink([this](LogLevel level, const std::string& message) { append(logLevelName(level), message); });
+            Logger::setProgressSink([this](const std::string& step, int done, int total, const std::string& item) {
+                std::lock_guard<std::mutex> progressLock(mutex_);
+                progressStep_ = step;
+                progressDone_ = done;
+                progressTotal_ = total;
+                progressItem_ = item;
+            });
 
             JsonValue result;
             std::string state = "succeeded";
@@ -303,6 +287,11 @@ public:
             }
 
             Logger::setSink(nullptr);
+            Logger::setProgressSink(nullptr);
+            if (Process::cancelRequested()) state = "cancelled";
+            // The cancel only ever targets this job; leaving it set would
+            // make every later adb call (device lists included) refuse to run.
+            Process::clearCancel();
             finish(state, std::move(result));
         });
         return true;
@@ -320,9 +309,23 @@ public:
         snap.startedAt = startedAt_;
         snap.finishedAt = finishedAt_;
         snap.logSize = log_.size();
+        snap.cancelling = cancelling_;
+        snap.progressStep = progressStep_;
+        snap.progressDone = progressDone_;
+        snap.progressTotal = progressTotal_;
+        snap.progressItem = progressItem_;
         snap.result = result_;
         for (size_t i = std::min(since, log_.size()); i < log_.size(); ++i) snap.newLines.push_back(log_[i]);
         return snap;
+    }
+
+    /// Asks the running job to stop. Returns false if none is running.
+    bool cancel() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!running_) return false;
+        cancelling_ = true;
+        Process::requestCancel();
+        return true;
     }
 
     /// Forgets a finished job so the GUI can return to its idle state.
@@ -354,7 +357,7 @@ private:
         std::lock_guard<std::mutex> lock(mutex_);
         state_ = state;
         result_ = std::move(result);
-        finishedAt_ = utcTimestamp();
+        finishedAt_ = strutil::utcTimestamp();
         running_ = false;
     }
 
@@ -362,6 +365,11 @@ private:
     std::thread thread_;
     bool running_ = false;
     bool present_ = false;
+    bool cancelling_ = false;
+    std::string progressStep_;
+    int progressDone_ = 0;
+    int progressTotal_ = 0;
+    std::string progressItem_;
     int id_ = 0;
     std::string kind_;
     std::string state_ = "idle";
@@ -384,6 +392,13 @@ JsonValue jobJson(const JobRunner::Snapshot& snap) {
     object.set("started_at", snap.startedAt);
     object.set("finished_at", snap.finishedAt);
     object.set("log_size", static_cast<long long>(snap.logSize));
+    object.set("cancelling", snap.cancelling);
+    JsonValue progress = JsonValue::makeObject();
+    progress.set("step", snap.progressStep);
+    progress.set("done", snap.progressDone);
+    progress.set("total", snap.progressTotal);
+    progress.set("item", snap.progressItem);
+    object.set("progress", progress);
     object.set("result", snap.result);
 
     JsonValue lines = JsonValue::makeArray();
@@ -400,6 +415,7 @@ JsonValue jobJson(const JobRunner::Snapshot& snap) {
 JsonValue backupSummaryResultJson(const BackupSummary& summary) {
     JsonValue object = JsonValue::makeObject();
     object.set("success", summary.success);
+    object.set("cancelled", summary.cancelled);
     object.set("mode", summary.mode);
     object.set("package_count", summary.packageCount);
     object.set("packages_with_data", summary.packagesWithData);
@@ -437,6 +453,7 @@ JsonValue backupSummaryResultJson(const BackupSummary& summary) {
 JsonValue restoreSummaryResultJson(const RestoreSummary& summary) {
     JsonValue object = JsonValue::makeObject();
     object.set("success", summary.success && summary.packagesFailed == 0);
+    object.set("cancelled", summary.cancelled);
     object.set("packages_restored", summary.packagesRestored);
     object.set("packages_failed", summary.packagesFailed);
     object.set("packages_skipped", summary.packagesSkipped);
@@ -518,8 +535,14 @@ private:
         if (path == "/api/backups") return handleBackups(request);
         if (path == "/api/backup") return handleBackupDetail(request);
         if (path == "/api/backup/files") return handleBackupFiles(request);
+        if (path == "/api/backup/verify") return handleBackupVerify(request);
         if (path == "/api/job") return handleJob(request);
 
+        if (path == "/api/job/cancel") {
+            if (!isPost) return errorResponse("Method not allowed", 405);
+            if (!job_.cancel()) return errorResponse("No job is running.", 409);
+            return handleJob(request);
+        }
         if (path == "/api/job/dismiss") {
             if (!isPost) return errorResponse("Method not allowed", 405);
             if (!job_.dismiss()) return errorResponse("A job is still running.", 409);
@@ -665,6 +688,28 @@ private:
         object.set("path", dir.string());
         object.set("sub", relative == "." ? "" : relative);
         object.set("entries", entries);
+        return jsonResponse(object);
+    }
+
+    http::Response handleBackupVerify(const http::Request& request) {
+        fs::path dir = expandUserPath(request.param("path"));
+        if (dir.empty()) return errorResponse("Missing 'path' parameter.", 400);
+        if (!BackupStore::isBackupDirectory(dir)) {
+            return errorResponse("Not an abp backup directory (no manifest.json): " + dir.string(), 404);
+        }
+        const VerifyReport report = BackupStore::verify(dir);
+        JsonValue problems = JsonValue::makeArray();
+        for (const auto& problem : report.problems) {
+            JsonValue item = JsonValue::makeObject();
+            item.set("path", problem.path);
+            item.set("problem", problem.problem);
+            problems.push_back(item);
+        }
+        JsonValue object = JsonValue::makeObject();
+        object.set("ok", report.ok());
+        object.set("verified", report.verified);
+        object.set("unverifiable", report.unverifiable);
+        object.set("problems", problems);
         return jsonResponse(object);
     }
 

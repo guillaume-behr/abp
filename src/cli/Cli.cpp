@@ -1,21 +1,44 @@
 #include "abp/Cli.h"
 
+#include <csignal>
 #include <cstdlib>
 #include <iostream>
 #include <ostream>
+#include <unistd.h>
 
 #include "abp/AdbClient.h"
 #include "abp/BackupManager.h"
 #include "abp/BackupOptions.h"
+#include "abp/BackupStore.h"
 #include "abp/DevicePaths.h"
 #include "abp/GuiServer.h"
 #include "abp/Json.h"
 #include "abp/Logger.h"
+#include "abp/Process.h"
 #include "abp/StringUtil.h"
 #include "abp/Version.h"
 
 namespace abp {
 namespace {
+
+/// First Ctrl-C: stop the backup/restore cleanly (the running adb is
+/// terminated, and a backup still writes the manifest for what it captured).
+/// SA_RESETHAND puts the default action back, so a second Ctrl-C exits at
+/// once for someone who does not want to wait.
+extern "C" void onInterrupt(int) {
+    static const char kMessage[] = "\nCancelling... (press Ctrl-C again to quit immediately)\n";
+    ssize_t ignored = ::write(STDERR_FILENO, kMessage, sizeof(kMessage) - 1);
+    (void)ignored;
+    Process::requestCancel();
+}
+
+void installInterruptHandler() {
+    struct sigaction action {};
+    action.sa_handler = onInterrupt;
+    sigemptyset(&action.sa_mask);
+    action.sa_flags = static_cast<int>(SA_RESETHAND);
+    ::sigaction(SIGINT, &action, nullptr);
+}
 
 const char* kUsage = R"(abp - ADB-based Android backup and restore tool
 
@@ -25,6 +48,7 @@ Usage:
   abp list-packages [-s SERIAL] [--system] [--json]
   abp backup -o DIR [options]
   abp restore -i DIR [options]
+  abp verify -i DIR
   abp gui [options]
   abp --help
   abp -V | --version
@@ -107,13 +131,11 @@ bool ensureAdbAvailable() {
     return false;
 }
 
-const char* rootMethodLabel(RootMethod method) {
-    switch (method) {
-        case RootMethod::AdbdRoot: return "adbd already running as root";
-        case RootMethod::SuBinary: return "su binary available";
-        case RootMethod::None: return "none";
-    }
-    return "none";
+/// The value following the option at args[i], advancing i past it. Throws
+/// (reported as a usage error by Cli::run) when the option is last.
+const std::string& optionValue(const std::vector<std::string>& args, size_t& i) {
+    if (i + 1 >= args.size()) throw std::runtime_error(args[i] + " requires a value");
+    return args[++i];
 }
 
 int cmdDevices() {
@@ -144,7 +166,7 @@ int cmdInfo(const std::string& serial) {
     std::cout << "Manufacturer:  " << info.manufacturer << "\n";
     std::cout << "Model:         " << info.model << "\n";
     std::cout << "Android:       " << info.androidRelease << " (SDK " << info.sdkInt << ")\n";
-    std::cout << "Root access:   " << (info.isRooted() ? "yes" : "no") << " (" << rootMethodLabel(info.root.method)
+    std::cout << "Root access:   " << (info.isRooted() ? "yes" : "no") << " (" << describeRootMethod(info.root.method)
                << ")\n";
     return 0;
 }
@@ -189,22 +211,16 @@ int cmdBackup(const std::vector<std::string>& args) {
 
     for (size_t i = 0; i < args.size(); ++i) {
         const std::string& arg = args[i];
-        auto value = [&](const char* flag) -> std::string {
-            if (i + 1 >= args.size()) {
-                throw std::runtime_error(std::string(flag) + " requires a value");
-            }
-            return args[++i];
-        };
 
-        if (arg == "-s" || arg == "--serial") options.serial = value(arg.c_str());
-        else if (arg == "-o" || arg == "--output") { options.outputDir = value(arg.c_str()); haveOutput = true; }
+        if (arg == "-s" || arg == "--serial") options.serial = optionValue(args, i);
+        else if (arg == "-o" || arg == "--output") { options.outputDir = optionValue(args, i); haveOutput = true; }
         else if (arg == "--system") options.includeSystemApps = true;
         else if (arg == "--no-apks") options.includeApks = false;
         else if (arg == "--no-data") options.includeAppData = false;
         else if (arg == "--no-shared") options.includeSharedStorage = false;
         else if (arg == "--no-personal") options.exportPersonalData = false;
-        else if (arg == "--only") options.onlyPackages = splitCsv(value(arg.c_str()));
-        else if (arg == "--exclude") options.excludePackages = splitCsv(value(arg.c_str()));
+        else if (arg == "--only") options.onlyPackages = splitCsv(optionValue(args, i));
+        else if (arg == "--exclude") options.excludePackages = splitCsv(optionValue(args, i));
         else if (arg == "--root") options.mode = BackupMode::Root;
         else if (arg == "--standard") options.mode = BackupMode::Standard;
         else if (arg == "--all-files") {
@@ -212,7 +228,7 @@ int cmdBackup(const std::vector<std::string>& args) {
                 options.filesystemPaths.push_back(root);
             }
         }
-        else if (arg == "--pull-path") options.filesystemPaths.push_back(value(arg.c_str()));
+        else if (arg == "--pull-path") options.filesystemPaths.push_back(optionValue(args, i));
         else if (arg == "-y" || arg == "--yes") options.assumeYes = true;
         else {
             Logger::error("Unknown backup option: " + arg);
@@ -252,6 +268,7 @@ int cmdBackup(const std::vector<std::string>& args) {
         }
     }
 
+    installInterruptHandler();
     BackupSummary summary = BackupManager::runBackup(options);
     for (const auto& message : summary.messages) Logger::error(message);
 
@@ -309,21 +326,15 @@ int cmdRestore(const std::vector<std::string>& args) {
 
     for (size_t i = 0; i < args.size(); ++i) {
         const std::string& arg = args[i];
-        auto value = [&](const char* flag) -> std::string {
-            if (i + 1 >= args.size()) {
-                throw std::runtime_error(std::string(flag) + " requires a value");
-            }
-            return args[++i];
-        };
 
-        if (arg == "-s" || arg == "--serial") options.serial = value(arg.c_str());
-        else if (arg == "-i" || arg == "--input") { options.inputDir = value(arg.c_str()); haveInput = true; }
+        if (arg == "-s" || arg == "--serial") options.serial = optionValue(args, i);
+        else if (arg == "-i" || arg == "--input") { options.inputDir = optionValue(args, i); haveInput = true; }
         else if (arg == "--no-apks") options.includeApks = false;
         else if (arg == "--no-data") options.includeAppData = false;
         else if (arg == "--no-shared") options.includeSharedStorage = false;
         else if (arg == "--no-personal") options.includePersonalData = false;
-        else if (arg == "--only") options.onlyPackages = splitCsv(value(arg.c_str()));
-        else if (arg == "--exclude") options.excludePackages = splitCsv(value(arg.c_str()));
+        else if (arg == "--only") options.onlyPackages = splitCsv(optionValue(args, i));
+        else if (arg == "--exclude") options.excludePackages = splitCsv(optionValue(args, i));
         else if (arg == "-y" || arg == "--yes") options.assumeYes = true;
         else {
             Logger::error("Unknown restore option: " + arg);
@@ -348,6 +359,7 @@ int cmdRestore(const std::vector<std::string>& args) {
         }
     }
 
+    installInterruptHandler();
     RestoreSummary summary = BackupManager::runRestore(options);
     for (const auto& message : summary.messages) Logger::error(message);
 
@@ -379,6 +391,36 @@ int cmdRestore(const std::vector<std::string>& args) {
     return summary.packagesFailed > 0 ? 1 : 0;
 }
 
+int cmdVerify(const std::vector<std::string>& args) {
+    std::string input;
+    for (size_t i = 0; i < args.size(); ++i) {
+        if ((args[i] == "-i" || args[i] == "--input") && i + 1 < args.size()) {
+            input = args[++i];
+        } else if (input.empty() && !args[i].empty() && args[i][0] != '-') {
+            input = args[i];
+        } else {
+            Logger::error("Unknown verify option: " + args[i]);
+            return 2;
+        }
+    }
+    if (input.empty()) {
+        Logger::error("verify requires -i/--input DIR");
+        return 2;
+    }
+
+    const VerifyReport report = BackupStore::verify(input);
+    std::cout << "Checked '" << input << "':\n";
+    std::cout << "  Checksums matched:   " << report.verified << "\n";
+    std::cout << "  Present, no checksum: " << report.unverifiable << "\n";
+    if (report.ok()) {
+        std::cout << "  Problems:            none\n";
+        return 0;
+    }
+    std::cout << "  Problems:            " << report.problems.size() << "\n";
+    for (const auto& problem : report.problems) std::cout << "    " << problem.path << ": " << problem.problem << "\n";
+    return 1;
+}
+
 int parseIntOption(const std::string& flag, const std::string& value) {
     try {
         size_t consumed = 0;
@@ -395,17 +437,11 @@ int cmdGui(const std::vector<std::string>& args) {
 
     for (size_t i = 0; i < args.size(); ++i) {
         const std::string& arg = args[i];
-        auto value = [&](const char* flag) -> std::string {
-            if (i + 1 >= args.size()) {
-                throw std::runtime_error(std::string(flag) + " requires a value");
-            }
-            return args[++i];
-        };
 
-        if (arg == "--port") options.port = parseIntOption(arg, value(arg.c_str()));
-        else if (arg == "--host") options.host = value(arg.c_str());
-        else if (arg == "-d" || arg == "--backup-dir") options.backupRoot = value(arg.c_str());
-        else if (arg == "--scan-depth") options.scanDepth = parseIntOption(arg, value(arg.c_str()));
+        if (arg == "--port") options.port = parseIntOption(arg, optionValue(args, i));
+        else if (arg == "--host") options.host = optionValue(args, i);
+        else if (arg == "-d" || arg == "--backup-dir") options.backupRoot = optionValue(args, i);
+        else if (arg == "--scan-depth") options.scanDepth = parseIntOption(arg, optionValue(args, i));
         else if (arg == "--no-browser") options.openBrowser = false;
         else {
             Logger::error("Unknown gui option: " + arg);
@@ -540,6 +576,7 @@ int Cli::run(int argc, char** argv) {
 
         if (command == "backup") return cmdBackup(rest);
         if (command == "restore") return cmdRestore(rest);
+        if (command == "verify") return cmdVerify(rest);
         if (command == "gui") return cmdGui(rest);
 
         Logger::error("Unknown command: " + command);

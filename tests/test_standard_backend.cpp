@@ -1,68 +1,25 @@
 #include "abp/StandardBackend.h"
 
-#include <unistd.h>
-
 #include <filesystem>
 #include <fstream>
 #include <string>
 
+#include "FakeAdb.h"
 #include "TestFramework.h"
 #include "abp/AdbClient.h"
 #include "abp/FsUtil.h"
 #include "abp/Manifest.h"
 
 using namespace abp;
+using abp::test::FakeAdb;
 namespace fs = std::filesystem;
 
 namespace {
-
-/// Installs a fake `adb` and a scratch backup directory for one test, and
-/// restores the previous adb path when it goes out of scope.
-class StandardFixture {
-public:
-    explicit StandardFixture(const std::string& script) : previousPath_(AdbClient::adbPath()) {
-        static int counter = 0;
-        root_ = fs::temp_directory_path() /
-                ("abp_std_" + std::to_string(::getpid()) + "_" + std::to_string(counter++));
-        fs::create_directories(root_ / "backup");
-
-        adbPath_ = root_ / "adb";
-        std::ofstream out(adbPath_);
-        out << "#!/bin/sh\n" << script;
-        out.close();
-        fs::permissions(adbPath_, fs::perms::owner_all);
-        AdbClient::setAdbPath(adbPath_.string());
-    }
-
-    ~StandardFixture() {
-        AdbClient::setAdbPath(previousPath_);
-        std::error_code ec;
-        fs::remove_all(root_, ec);
-    }
-
-    StandardFixture(const StandardFixture&) = delete;
-    StandardFixture& operator=(const StandardFixture&) = delete;
-
-    fs::path backupDir() const { return root_ / "backup"; }
-    fs::path logPath() const { return root_ / "calls.log"; }
-
-    std::string readLog() const {
-        if (!fs::exists(logPath())) return {};
-        return fsutil::readTextFile(logPath());
-    }
-
-private:
-    std::string previousPath_;
-    fs::path root_;
-    fs::path adbPath_;
-};
 
 /// A device where `com.example.debuggable` is debuggable (so `run-as` works)
 /// and `com.example.locked` is not. Records each call for later assertions.
 std::string mixedDeviceScript() {
     return R"SH(
-LOG="$(dirname "$0")/calls.log"
-echo "$*" >> "$LOG"
 shift $(( $# - 1 ))
 CMD="$1"
 case "$CMD" in
@@ -98,7 +55,7 @@ Manifest manifestFor(const std::vector<PackageInfo>& packages) {
 } // namespace
 
 ABP_TEST(standard_captures_debuggable_packages_via_run_as) {
-    StandardFixture fixture(mixedDeviceScript());
+    FakeAdb fixture(mixedDeviceScript());
     auto packages = twoPackages();
     Manifest manifest = manifestFor(packages);
 
@@ -116,7 +73,7 @@ ABP_TEST(standard_captures_debuggable_packages_via_run_as) {
 }
 
 ABP_TEST(standard_falls_back_to_legacy_only_for_non_debuggable_packages) {
-    StandardFixture fixture(mixedDeviceScript());
+    FakeAdb fixture(mixedDeviceScript());
     auto packages = twoPackages();
     Manifest manifest = manifestFor(packages);
 
@@ -145,7 +102,7 @@ ABP_TEST(standard_falls_back_to_legacy_only_for_non_debuggable_packages) {
 }
 
 ABP_TEST(standard_skips_the_legacy_flow_when_run_as_covers_everything) {
-    StandardFixture fixture(mixedDeviceScript());
+    FakeAdb fixture(mixedDeviceScript());
 
     PackageInfo only;
     only.name = "com.example.debuggable";
@@ -162,9 +119,7 @@ ABP_TEST(standard_skips_the_legacy_flow_when_run_as_covers_everything) {
 }
 
 ABP_TEST(standard_restores_run_as_packages_individually) {
-    StandardFixture fixture(R"SH(
-LOG="$(dirname "$0")/calls.log"
-echo "$*" >> "$LOG"
+    FakeAdb fixture(R"SH(
 shift $(( $# - 1 ))
 case "$1" in
   *"run-as 'com.example.debuggable' tar -xzf -"*) cat >/dev/null; exit 0;;
@@ -208,7 +163,7 @@ exit 1
 }
 
 ABP_TEST(standard_restore_refuses_a_corrupted_run_as_archive) {
-    StandardFixture fixture(R"SH(exit 0
+    FakeAdb fixture(R"SH(exit 0
 )SH");
 
     Manifest manifest;
@@ -232,7 +187,7 @@ ABP_TEST(standard_restore_refuses_a_corrupted_run_as_archive) {
 }
 
 ABP_TEST(standard_restore_reports_a_missing_run_as_archive) {
-    StandardFixture fixture("exit 0\n");
+    FakeAdb fixture("exit 0\n");
 
     Manifest manifest;
     manifest.mode = "standard";
@@ -250,9 +205,7 @@ ABP_TEST(standard_restore_reports_a_missing_run_as_archive) {
 }
 
 ABP_TEST(standard_restore_pushes_shared_storage_into_the_sdcard_root) {
-    StandardFixture fixture(R"SH(
-LOG="$(dirname "$0")/calls.log"
-echo "$*" >> "$LOG"
+    FakeAdb fixture(R"SH(
 exit 0
 )SH");
 
@@ -278,7 +231,7 @@ exit 0
 }
 
 ABP_TEST(standard_restore_explains_a_root_mode_shared_storage_archive) {
-    StandardFixture fixture("exit 0\n");
+    FakeAdb fixture("exit 0\n");
 
     // A root-mode backup: shared storage is a single tar file, not a tree.
     Manifest manifest;

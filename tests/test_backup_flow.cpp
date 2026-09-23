@@ -1,61 +1,24 @@
-#include <unistd.h>
-
+#include <algorithm>
 #include <filesystem>
-#include <fstream>
 #include <string>
+#include <vector>
 
+#include "FakeAdb.h"
 #include "TestFramework.h"
 #include "abp/AdbClient.h"
 #include "abp/BackupManager.h"
 #include "abp/FsUtil.h"
+#include "abp/Logger.h"
 #include "abp/Manifest.h"
+#include "abp/Process.h"
 #include "abp/RootBackend.h"
 #include "abp/StandardBackend.h"
 
 using namespace abp;
+using abp::test::FakeAdb;
 namespace fs = std::filesystem;
 
 namespace {
-
-/// A fake `adb` plus a scratch directory, restored/removed on destruction.
-/// Every invocation is appended to calls.log next to the script.
-class FlowFixture {
-public:
-    explicit FlowFixture(const std::string& script) : previousPath_(AdbClient::adbPath()) {
-        static int counter = 0;
-        root_ = fs::temp_directory_path() /
-                ("abp_flow_" + std::to_string(::getpid()) + "_" + std::to_string(counter++));
-        fs::create_directories(root_ / "backup");
-
-        adbPath_ = root_ / "adb";
-        std::ofstream out(adbPath_);
-        out << "#!/bin/sh\necho \"$*\" >> \"$(dirname \"$0\")/calls.log\"\n" << script;
-        out.close();
-        fs::permissions(adbPath_, fs::perms::owner_all);
-        AdbClient::setAdbPath(adbPath_.string());
-    }
-
-    ~FlowFixture() {
-        AdbClient::setAdbPath(previousPath_);
-        std::error_code ec;
-        fs::remove_all(root_, ec);
-    }
-
-    FlowFixture(const FlowFixture&) = delete;
-    FlowFixture& operator=(const FlowFixture&) = delete;
-
-    fs::path backupDir() const { return root_ / "backup"; }
-
-    std::string readLog() const {
-        const fs::path log = root_ / "calls.log";
-        return fs::exists(log) ? fsutil::readTextFile(log) : std::string();
-    }
-
-private:
-    std::string previousPath_;
-    fs::path root_;
-    fs::path adbPath_;
-};
 
 /// A freshly reset, unrooted phone: one ready device, no third-party apps,
 /// and a little shared storage.
@@ -86,7 +49,7 @@ exit 1
 } // namespace
 
 ABP_TEST(backup_of_a_phone_without_apps_still_captures_shared_storage) {
-    FlowFixture fixture(kEmptyPhoneScript);
+    FakeAdb fixture(kEmptyPhoneScript);
 
     BackupOptions options;
     options.outputDir = fixture.backupDir();
@@ -103,7 +66,7 @@ ABP_TEST(backup_of_a_phone_without_apps_still_captures_shared_storage) {
 }
 
 ABP_TEST(backup_still_fails_when_named_packages_match_nothing) {
-    FlowFixture fixture(kEmptyPhoneScript);
+    FakeAdb fixture(kEmptyPhoneScript);
 
     BackupOptions options;
     options.outputDir = fixture.backupDir();
@@ -116,7 +79,7 @@ ABP_TEST(backup_still_fails_when_named_packages_match_nothing) {
 }
 
 ABP_TEST(backup_reports_a_connection_problem_instead_of_running) {
-    FlowFixture fixture(R"SH(
+    FakeAdb fixture(R"SH(
 case "$1" in
   devices)
     echo "List of devices attached"
@@ -138,7 +101,7 @@ exit 1
 ABP_TEST(standard_keeps_a_partially_pulled_shared_storage) {
     // adb stops at the first unreadable file and exits non-zero, but what it
     // copied before that is real data that belongs in the backup.
-    FlowFixture fixture(R"SH(
+    FakeAdb fixture(R"SH(
 [ "$1" = "-s" ] && shift 2
 if [ "$1" = "pull" ]; then
   shift
@@ -162,7 +125,7 @@ exit 1
 ABP_TEST(root_restore_skips_an_app_that_is_not_installed) {
     // No /data/data/<pkg> to stat: extracting anyway would create a root-owned
     // data directory that the app, once installed, cannot use.
-    FlowFixture fixture(R"SH(
+    FakeAdb fixture(R"SH(
 [ "$1" = "-s" ] && shift 2
 case "$2" in
   *"am force-stop"*) exit 0;;
@@ -193,7 +156,7 @@ exit 1
 }
 
 ABP_TEST(root_restore_extracts_and_fixes_ownership_for_an_installed_app) {
-    FlowFixture fixture(R"SH(
+    FakeAdb fixture(R"SH(
 [ "$1" = "-s" ] && shift 2
 case "$2" in
   *"am force-stop"*) exit 0;;
@@ -230,7 +193,7 @@ exit 1
 ABP_TEST(root_backup_captures_device_protected_data_too) {
     // The SMS database lives in /data/user_de/0/com.android.providers.telephony,
     // not in /data/data, so root mode must tar both.
-    FlowFixture fixture(R"SH(
+    FakeAdb fixture(R"SH(
 [ "$1" = "-s" ] && shift 2
 case "$2" in
   *"[ -d '/data/data/com.android.providers.telephony' ]"*) echo yes; exit 0;;
@@ -262,7 +225,7 @@ exit 1
 }
 
 ABP_TEST(root_restore_writes_back_device_protected_data_with_its_own_owner) {
-    FlowFixture fixture(R"SH(
+    FakeAdb fixture(R"SH(
 [ "$1" = "-s" ] && shift 2
 case "$2" in
   *"am force-stop"*) exit 0;;
@@ -301,7 +264,7 @@ exit 1
 }
 
 ABP_TEST(root_restore_refuses_a_corrupted_device_protected_archive) {
-    FlowFixture fixture("exit 0\n");
+    FakeAdb fixture("exit 0\n");
     fsutil::ensureDirectory(fixture.backupDir() / "data");
     fsutil::writeTextFile(fixture.backupDir() / "data" / "p.tar.gz", "ce");
     fsutil::writeTextFile(fixture.backupDir() / "data" / "p.de.tar.gz", "tampered");
@@ -360,7 +323,7 @@ exit 1
 } // namespace
 
 ABP_TEST(backup_copies_sd_cards_and_warns_about_what_it_could_not_capture) {
-    FlowFixture fixture(kTwoAppPhoneScript);
+    FakeAdb fixture(kTwoAppPhoneScript);
 
     BackupOptions options;
     options.outputDir = fixture.backupDir();
@@ -391,7 +354,7 @@ ABP_TEST(backup_copies_sd_cards_and_warns_about_what_it_could_not_capture) {
 }
 
 ABP_TEST(backup_leaves_sd_cards_alone_with_no_shared) {
-    FlowFixture fixture(kTwoAppPhoneScript);
+    FakeAdb fixture(kTwoAppPhoneScript);
 
     BackupOptions options;
     options.outputDir = fixture.backupDir();
@@ -403,4 +366,54 @@ ABP_TEST(backup_leaves_sd_cards_alone_with_no_shared) {
     ABP_CHECK(summary.success);
     ABP_CHECK_EQ(summary.removableStorageCount, 0);
     ABP_CHECK(fixture.readLog().find("list-volumes") == std::string::npos);
+}
+
+ABP_TEST(backup_reports_progress_per_package) {
+    FakeAdb fixture(kTwoAppPhoneScript);
+    std::vector<std::string> events;
+    Logger::setProgressSink([&events](const std::string& step, int done, int total, const std::string& item) {
+        events.push_back(step + " " + std::to_string(done) + "/" + std::to_string(total) + " " + item);
+    });
+
+    BackupOptions options;
+    options.outputDir = fixture.backupDir();
+    options.includeSharedStorage = false;
+    options.exportPersonalData = false;
+    BackupSummary summary = BackupManager::runBackup(options);
+    Logger::setProgressSink(nullptr);
+
+    ABP_CHECK(summary.success);
+    auto has = [&events](const std::string& event) {
+        return std::find(events.begin(), events.end(), event) != events.end();
+    };
+    ABP_CHECK(has("Extracting APKs 0/2 com.google.android.apps.authenticator2"));
+    ABP_CHECK(has("Backing up app data 1/2 com.example.notes"));
+    ABP_CHECK(has("Backing up app data 2/2 ")); // The step reports its completion.
+}
+
+ABP_TEST(backup_cancelled_mid_run_keeps_a_truthful_manifest) {
+    FakeAdb fixture(kTwoAppPhoneScript);
+    // Cancel as soon as the first package's APKs are being extracted.
+    Logger::setProgressSink([](const std::string& step, int, int, const std::string&) {
+        if (step == "Extracting APKs") Process::requestCancel();
+    });
+
+    BackupOptions options;
+    options.outputDir = fixture.backupDir();
+    BackupSummary summary = BackupManager::runBackup(options);
+    Logger::setProgressSink(nullptr);
+    Process::clearCancel();
+
+    ABP_CHECK(!summary.success);
+    ABP_CHECK(summary.cancelled);
+    ABP_CHECK(summary.messages.at(0).find("cancelled") != std::string::npos);
+    // Nothing after the cancel ran: no shared storage pull, no legacy backup.
+    ABP_CHECK(fixture.readLog().find("pull -a /sdcard") == std::string::npos);
+    ABP_CHECK(fixture.readLog().find("backup -f") == std::string::npos);
+
+    // The manifest exists and says the packages were not captured, rather
+    // than listing them as clean, empty successes.
+    Manifest manifest = Manifest::readFromFile(fixture.backupDir() / "manifest.json");
+    ABP_CHECK_EQ(manifest.packages.size(), 2u);
+    for (const auto& entry : manifest.packages) ABP_CHECK(entry.error.find("cancelled") != std::string::npos);
 }

@@ -1,7 +1,6 @@
 #include "abp/BackupManager.h"
 
 #include <algorithm>
-#include <ctime>
 #include <memory>
 #include <system_error>
 
@@ -12,6 +11,7 @@
 #include "abp/Logger.h"
 #include "abp/Manifest.h"
 #include "abp/PersonalData.h"
+#include "abp/Process.h"
 #include "abp/RootBackend.h"
 #include "abp/StandardBackend.h"
 #include "abp/StringUtil.h"
@@ -20,15 +20,6 @@
 namespace abp {
 namespace fs = std::filesystem;
 namespace {
-
-std::string currentUtcTimestamp() {
-    std::time_t now = std::time(nullptr);
-    std::tm utc{};
-    gmtime_r(&now, &utc);
-    char buffer[32];
-    std::strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%SZ", &utc);
-    return std::string(buffer);
-}
 
 bool contains(const std::vector<std::string>& haystack, const std::string& needle) {
     return std::find(haystack.begin(), haystack.end(), needle) != haystack.end();
@@ -65,7 +56,11 @@ void extractApks(const AdbClient& adb, const fs::path& outDir, const std::vector
                   Manifest& manifest) {
     fs::path apksDir = outDir / "apks";
 
+    const int total = static_cast<int>(packages.size());
+    int done = 0;
     for (const auto& pkg : packages) {
+        if (Process::cancelRequested()) return;
+        Logger::progress("Extracting APKs", done++, total, pkg.name);
         PackageBackupEntry* entry = findPackageEntry(manifest, pkg.name);
         if (entry == nullptr || pkg.apkPaths.empty()) continue;
 
@@ -106,16 +101,22 @@ void extractApks(const AdbClient& adb, const fs::path& outDir, const std::vector
                 entry->error = "only some APK files could be pulled; the APK set is incomplete";
             }
         } else if (anyFailed) {
-            entry->error = "failed to pull APK file(s) from device";
+            entry->error = Process::cancelRequested() ? "not captured: the backup was cancelled"
+                                                      : "failed to pull APK file(s) from device";
         }
     }
+    Logger::progress("Extracting APKs", total, total);
 }
 
 void installApks(const AdbClient& adb, const fs::path& backupDir, Manifest& manifest,
                   const std::vector<std::string>& selectedNames) {
+    const int total = static_cast<int>(selectedNames.size());
+    int done = 0;
     for (auto& entry : manifest.packages) {
-        if (!entry.apkIncluded || entry.apkFiles.empty()) continue;
         if (!contains(selectedNames, entry.name)) continue;
+        if (Process::cancelRequested()) return;
+        Logger::progress("Installing APKs", done++, total, entry.name);
+        if (!entry.apkIncluded || entry.apkFiles.empty()) continue;
 
         std::vector<std::string> localPaths;
         localPaths.reserve(entry.apkFiles.size());
@@ -127,6 +128,7 @@ void installApks(const AdbClient& adb, const fs::path& backupDir, Manifest& mani
             Logger::warn("Failed to install " + entry.name);
         }
     }
+    Logger::progress("Installing APKs", total, total);
 }
 
 /// Copies whole device paths verbatim with `adb pull`, recording each tree
@@ -158,7 +160,11 @@ void captureFilesystem(const AdbClient& adb, const fs::path& outDir, const std::
         return;
     }
 
+    const int total = static_cast<int>(paths.size());
+    int done = 0;
     for (const auto& devicePath : paths) {
+        if (Process::cancelRequested()) return;
+        Logger::progress("Pulling device paths", done++, total, devicePath);
         const devicepaths::PathVerdict verdict = devicepaths::classify(devicePath);
         if (verdict != devicepaths::PathVerdict::Ok) {
             Logger::warn(devicepaths::explainVerdict(verdict, devicePath));
@@ -350,7 +356,7 @@ BackupSummary BackupManager::runBackup(const BackupOptions& options) {
     Manifest manifest;
     manifest.formatVersion = kManifestFormatVersion;
     manifest.abpVersion = kVersionString;
-    manifest.createdAtUtc = currentUtcTimestamp();
+    manifest.createdAtUtc = strutil::utcTimestamp();
     manifest.mode = backend->name();
     manifest.device = device;
 
@@ -387,17 +393,17 @@ BackupSummary BackupManager::runBackup(const BackupOptions& options) {
         manifest.packages.push_back(std::move(entry));
     }
 
-    if (options.includeApks && !packages.empty()) {
+    if (options.includeApks && !packages.empty() && !Process::cancelRequested()) {
         Logger::info("Extracting APKs...");
         extractApks(adb, options.outputDir, packages, manifest);
     }
 
-    if (options.includeAppData && !packages.empty()) {
+    if (options.includeAppData && !packages.empty() && !Process::cancelRequested()) {
         Logger::info("Backing up app data...");
         backend->backupAppData(adb, options.outputDir, packages, manifest);
     }
 
-    if (options.includeSharedStorage) {
+    if (options.includeSharedStorage && !Process::cancelRequested()) {
         Logger::info("Backing up shared storage...");
         summary.sharedStorageIncluded = backend->backupSharedStorage(adb, options.outputDir, manifest);
         if (!summary.sharedStorageIncluded) {
@@ -405,7 +411,7 @@ BackupSummary BackupManager::runBackup(const BackupOptions& options) {
         }
     }
 
-    if (options.exportPersonalData) {
+    if (options.exportPersonalData && !Process::cancelRequested()) {
         Logger::info("Exporting contacts, messages, call log, calendar and settings...");
         summary.personalExports = personal::exportPersonalData(adb, options.outputDir, device, manifest);
     }
@@ -415,7 +421,7 @@ BackupSummary BackupManager::runBackup(const BackupOptions& options) {
     // restoring onto a phone that may not even have that card is left to
     // the user.
     std::vector<std::string> capturePaths = options.filesystemPaths;
-    if (options.includeSharedStorage) {
+    if (options.includeSharedStorage && !Process::cancelRequested()) {
         for (const auto& root : adb.removableStorageRoots()) {
             Logger::info("Found removable storage at " + root + "; it will be copied too.");
             capturePaths.push_back(root);
@@ -423,7 +429,7 @@ BackupSummary BackupManager::runBackup(const BackupOptions& options) {
         }
     }
 
-    if (!capturePaths.empty()) {
+    if (!capturePaths.empty() && !Process::cancelRequested()) {
         // `adb pull` transfers as whatever user adbd runs as. A `su` binary
         // cannot change that: su elevates commands run through the shell,
         // while pull is a separate file-transfer service. So on a Magisk-style
@@ -445,6 +451,16 @@ BackupSummary BackupManager::runBackup(const BackupOptions& options) {
         summary.filesystemCaptureCount = static_cast<int>(manifest.filesystemCaptures.size());
         for (const auto& capture : manifest.filesystemCaptures) {
             if (!capture.complete) ++summary.filesystemPartialCount;
+        }
+    }
+
+    // Packages the cancel reached before anything was captured for them must
+    // not read as clean, empty successes in the manifest.
+    if (Process::cancelRequested()) {
+        for (auto& entry : manifest.packages) {
+            if (!entry.apkIncluded && !entry.dataIncluded && entry.error.empty()) {
+                entry.error = "not captured: the backup was cancelled";
+            }
         }
     }
 
@@ -471,6 +487,16 @@ BackupSummary BackupManager::runBackup(const BackupOptions& options) {
             case DataCaptureMethod::None: break;
         }
     }
+    if (Process::cancelRequested()) {
+        // What was captured before the cancel is real and now described by
+        // manifest.json, so it is kept; the run still counts as failed.
+        summary.cancelled = true;
+        summary.messages.push_back("Backup cancelled. What was captured before that is in '" +
+                                   options.outputDir.string() + "' and listed in its manifest.json.");
+        summary.totalBytes = fsutil::directorySize(options.outputDir);
+        return summary;
+    }
+
     reportCoverage(options, device, manifest, summary);
 
     // Measure the directory rather than summing the manifest's archive sizes:
@@ -560,11 +586,11 @@ RestoreSummary BackupManager::runRestore(const RestoreOptions& options) {
         installApks(adb, options.inputDir, manifest, selectedNames);
     }
 
-    if (options.includeAppData && !(needsRoot && !device.isRooted())) {
+    if (options.includeAppData && !(needsRoot && !device.isRooted()) && !Process::cancelRequested()) {
         backend->restoreAppData(adb, options.inputDir, manifest, selectedNames);
     }
 
-    if (options.includeSharedStorage && !(needsRoot && !device.isRooted())) {
+    if (options.includeSharedStorage && !(needsRoot && !device.isRooted()) && !Process::cancelRequested()) {
         summary.sharedStorageRestored = backend->restoreSharedStorage(adb, options.inputDir, manifest);
     }
 
@@ -572,7 +598,7 @@ RestoreSummary BackupManager::runRestore(const RestoreOptions& options) {
     // Wi-Fi networks are re-added; writing the providers' databases directly
     // needs root, and a root-mode backup of them is restored with the other
     // app data anyway. Messages, call log and settings are archival.
-    if (options.includePersonalData && !manifest.personalDataExports.empty()) {
+    if (options.includePersonalData && !manifest.personalDataExports.empty() && !Process::cancelRequested()) {
         summary.personal = personal::restorePersonalData(adb, options.inputDir, manifest, device.sdkInt);
     }
 
@@ -619,6 +645,12 @@ RestoreSummary BackupManager::runRestore(const RestoreOptions& options) {
     if (summary.packagesSkipped > 0) {
         Logger::warn(std::to_string(summary.packagesSkipped) +
                       " selected package(s) had nothing to restore in this backup (no APK and no captured data).");
+    }
+
+    if (Process::cancelRequested()) {
+        summary.cancelled = true;
+        summary.messages.push_back("Restore cancelled; the device may hold a partial restore.");
+        return summary;
     }
 
     summary.success = true;

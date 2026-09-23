@@ -1,5 +1,8 @@
 #include "abp/Process.h"
 
+#include <chrono>
+#include <thread>
+
 #include <fcntl.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -232,4 +235,28 @@ ABP_TEST(process_gives_children_an_empty_stdin_when_none_is_supplied) {
     ABP_CHECK_EQ(r.stdOut, std::string("[]\n"));
     ABP_CHECK(!toFile.spawnFailed);
     ABP_CHECK_EQ(readAll(out.path()), std::string("[]\n"));
+}
+
+ABP_TEST(process_cancel_stops_a_running_child_and_refuses_new_ones) {
+    // A child that would run for a minute is stopped within the grace period.
+    std::thread canceller([] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+        Process::requestCancel();
+    });
+    const auto started = std::chrono::steady_clock::now();
+    ProcessResult r = Process::run({"sleep", "60"});
+    canceller.join();
+    const auto elapsed = std::chrono::steady_clock::now() - started;
+
+    ABP_CHECK(r.cancelled);
+    ABP_CHECK(!r.ok());
+    ABP_CHECK(elapsed < std::chrono::seconds(10));
+
+    // While the cancel is pending nothing new starts.
+    ProcessResult refused = Process::run({"sh", "-c", "exit 0"});
+    ABP_CHECK(refused.cancelled);
+    ABP_CHECK(!refused.ok());
+
+    Process::clearCancel();
+    ABP_CHECK(Process::run({"sh", "-c", "exit 0"}).ok());
 }

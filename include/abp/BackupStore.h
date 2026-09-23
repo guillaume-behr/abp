@@ -47,6 +47,21 @@ struct BackupFileEntry {
     unsigned long long sizeBytes = 0;
 };
 
+/// One file a backup's manifest refers to that is not as recorded.
+struct VerifyProblem {
+    std::string path;    ///< Relative to the backup directory.
+    std::string problem; ///< e.g. "missing", "checksum mismatch".
+};
+
+/// Outcome of BackupStore::verify().
+struct VerifyReport {
+    int verified = 0;     ///< Files whose SHA-256 matched the manifest.
+    int unverifiable = 0; ///< Present, but recorded without a checksum (APKs, pulled trees, the legacy .ab).
+    std::vector<VerifyProblem> problems;
+
+    bool ok() const { return problems.empty(); }
+};
+
 /// Read-only view over backup directories on disk: discovery, manifest
 /// loading, and sandboxed browsing of a backup's contents. Nothing here
 /// touches a device -- it is the "explore an existing backup" half of the
@@ -70,6 +85,12 @@ public:
     /// Loads the full manifest of the backup at `dir`. Throws
     /// std::runtime_error if it is missing or malformed.
     static Manifest loadManifest(const fs::path& dir);
+
+    /// Checks that every file the backup's manifest lists is present inside
+    /// the backup and, where a checksum was recorded, still matches it --
+    /// the same checks a restore makes, without a device. Throws
+    /// std::runtime_error if the manifest itself cannot be read.
+    static VerifyReport verify(const fs::path& dir);
 
     /// Resolves `relative` inside `backupDir`, guaranteeing the result stays
     /// within the backup directory (so a browsing request can never escape

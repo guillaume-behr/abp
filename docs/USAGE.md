@@ -321,6 +321,35 @@ abp restore -i ~/backups/full --no-data --no-shared
 abp restore -i ~/backups/full --only com.example.one --no-shared
 ```
 
+### Cancelling
+
+Press Ctrl-C once during `abp backup` or `abp restore` to stop cleanly:
+the running adb transfer is terminated, and a cancelled backup still
+writes `manifest.json` for whatever it captured, marking the packages it
+never reached as `not captured: the backup was cancelled`. Press Ctrl-C a
+second time to quit immediately. On a terminal, long steps also show a
+progress line such as `[12/48] Backing up app data: com.example.app`.
+
+## `abp verify -i DIR`
+
+Checks a backup without a device: every file `manifest.json` lists must
+exist inside the backup directory, and every file with a recorded SHA-256
+(app data archives, the root-mode shared storage tar, the personal data
+exports) must still match it -- the same checks a restore makes before
+writing anything.
+
+```
+Checked '/home/me/backups/full':
+  Checksums matched:   57
+  Present, no checksum: 131
+  Problems:            1
+    data/com.example.app.tar.gz: checksum mismatch
+```
+
+"Present, no checksum" covers files abp has no checksum for (APKs,
+pulled directory trees, the legacy `.ab` archive); they are checked for
+presence only. The exit status is 1 when any problem is found.
+
 ## `abp gui [options]`
 
 Starts the local web GUI and (unless told not to) opens it in a browser:

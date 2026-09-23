@@ -3,12 +3,15 @@
 #include <cctype>
 #include <cstdio>
 #include <ctime>
+#include <functional>
+#include <utility>
 #include <system_error>
 
 #include "abp/ArchiveIntegrity.h"
 #include "abp/FsUtil.h"
 #include "abp/Json.h"
 #include "abp/Logger.h"
+#include "abp/Process.h"
 #include "abp/StringUtil.h"
 
 namespace abp::personal {
@@ -926,14 +929,23 @@ std::vector<ExportResult> exportPersonalData(const AdbClient& adb, const fs::pat
         return results;
     }
 
-    const std::string stamp = formatUtc(std::time(nullptr), UtcStyle::Iso);
-    results.push_back(exportContacts(adb, outDir, manifest));
-    results.push_back(exportSms(adb, outDir, stamp, manifest));
-    results.push_back(exportMms(adb, outDir, stamp, manifest));
-    results.push_back(exportCallLog(adb, outDir, stamp, manifest));
-    results.push_back(exportCalendar(adb, outDir, manifest));
-    results.push_back(exportSettings(adb, outDir, stamp, manifest));
-    results.push_back(exportWifi(adb, outDir, device, manifest));
+    const std::string stamp = strutil::utcTimestamp();
+    const std::vector<std::pair<const char*, std::function<ExportResult()>>> steps = {
+        {"contacts", [&] { return exportContacts(adb, outDir, manifest); }},
+        {"SMS", [&] { return exportSms(adb, outDir, stamp, manifest); }},
+        {"MMS", [&] { return exportMms(adb, outDir, stamp, manifest); }},
+        {"call log", [&] { return exportCallLog(adb, outDir, stamp, manifest); }},
+        {"calendar", [&] { return exportCalendar(adb, outDir, manifest); }},
+        {"settings", [&] { return exportSettings(adb, outDir, stamp, manifest); }},
+        {"Wi-Fi", [&] { return exportWifi(adb, outDir, device, manifest); }},
+    };
+    const int total = static_cast<int>(steps.size());
+    for (int i = 0; i < total; ++i) {
+        if (Process::cancelRequested()) break;
+        Logger::progress("Exporting personal data", i, total, steps[static_cast<size_t>(i)].first);
+        results.push_back(steps[static_cast<size_t>(i)].second());
+    }
+    Logger::progress("Exporting personal data", total, total);
 
     std::error_code ec;
     if (fs::is_empty(outDir / kExportDir, ec)) fs::remove(outDir / kExportDir, ec);

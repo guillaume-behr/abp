@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <ctime>
 #include <regex>
 
 namespace abp::strutil {
@@ -91,6 +92,15 @@ std::string formatBytes(unsigned long long bytes) {
         std::snprintf(buffer, sizeof(buffer), "%.2f %s", value, units[unitIndex]);
     }
     return std::string(buffer);
+}
+
+std::string utcTimestamp() {
+    const std::time_t now = std::time(nullptr);
+    std::tm utc{};
+    gmtime_r(&now, &utc);
+    char buffer[32];
+    std::strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%SZ", &utc);
+    return buffer;
 }
 
 } // namespace abp::strutil

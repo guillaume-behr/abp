@@ -4,7 +4,11 @@
 #include <filesystem>
 #include <fstream>
 
+#include <unistd.h>
+
 #include "TestFramework.h"
+#include "abp/FsUtil.h"
+#include "abp/Sha256.h"
 
 using namespace abp;
 namespace fs = std::filesystem;
@@ -186,4 +190,42 @@ ABP_TEST(backupstore_lists_directories_first) {
         threw = true;
     }
     ABP_CHECK(threw);
+}
+
+ABP_TEST(backupstore_verify_reports_missing_and_tampered_files) {
+    const fs::path dir = fs::temp_directory_path() / ("abp_verify_" + std::to_string(::getpid()));
+    fs::remove_all(dir);
+    fsutil::writeTextFile(dir / "data" / "good.tar.gz", "good");
+    fsutil::writeTextFile(dir / "data" / "bad.tar.gz", "tampered");
+    fsutil::writeTextFile(dir / "apks" / "a" / "base.apk", "apk");
+
+    Manifest manifest;
+    PackageBackupEntry good;
+    good.name = "com.example.good";
+    good.apkFiles = {"apks/a/base.apk"};
+    good.dataArchive = "data/good.tar.gz";
+    good.dataArchiveSha256 = crypto::sha256Hex("good");
+    PackageBackupEntry bad;
+    bad.name = "com.example.bad";
+    bad.dataArchive = "data/bad.tar.gz";
+    bad.dataArchiveSha256 = crypto::sha256Hex("original");
+    bad.deDataArchive = "data/gone.de.tar.gz";
+    bad.deDataArchiveSha256 = crypto::sha256Hex("x");
+    PackageBackupEntry escaping;
+    escaping.name = "com.example.escape";
+    escaping.dataArchive = "../../etc/passwd";
+    manifest.packages = {good, bad, escaping};
+    manifest.writeToFile(dir / "manifest.json");
+
+    VerifyReport report = BackupStore::verify(dir);
+    fs::remove_all(dir);
+
+    ABP_CHECK(!report.ok());
+    ABP_CHECK_EQ(report.verified, 1);
+    ABP_CHECK_EQ(report.unverifiable, 1); // The APK has no recorded checksum.
+    ABP_CHECK_EQ(report.problems.size(), 3u);
+    ABP_CHECK_EQ(report.problems[0].path, "data/bad.tar.gz");
+    ABP_CHECK_EQ(report.problems[0].problem, "checksum mismatch");
+    ABP_CHECK_EQ(report.problems[1].problem, "missing");
+    ABP_CHECK_EQ(report.problems[2].path, "../../etc/passwd"); // Never followed outside the backup.
 }

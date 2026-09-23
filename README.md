@@ -239,6 +239,7 @@ abp list-packages [-s SERIAL] [--system]     # installed packages
 
 abp backup  -o ./my-backup [options]         # back up
 abp restore -i ./my-backup [options]         # restore
+abp verify  -i ./my-backup                   # check every file against its checksum
 
 abp gui [--port 8787] [--no-browser]         # web GUI for all of the above
 ```

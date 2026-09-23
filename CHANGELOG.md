@@ -43,9 +43,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   as the adb user, and a `su` binary cannot elevate it (unlike shell
   commands), so a complete capture of `/data` needs adbd itself running
   as root via `adb root`.
-- Bulk `adb pull` transfers now write adb's own progress display
-  straight to the terminal instead of having it captured, so a
-  multi-gigabyte pull no longer looks like a hang.
 - Manifest format version 3 for the new `filesystem_captures` section.
   Versions 1 and 2 still load, with an empty capture list.
 
@@ -87,6 +84,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Download folder for import; SMS and call log are archival, since only
   the default SMS app may write messages. `--no-personal` turns both off;
   the GUI has matching toggles and shows the exports when exploring.
+- **Cancelling**: the GUI has a Cancel button and the CLI stops cleanly
+  on Ctrl-C (a second Ctrl-C quits at once). The running adb process is
+  terminated, and a cancelled backup still writes a manifest for what it
+  captured, with the packages it never reached marked as not captured.
+- **Progress**: long steps report `done/total` and the item in hand,
+  shown as a progress bar in the GUI and a self-updating line on a
+  terminal.
+- **`abp verify -i DIR`** (and `/api/backup/verify`, and a *Verify
+  checksums* button in the GUI) checks every file a backup's manifest
+  lists for presence and, where recorded, its SHA-256 -- without a
+  device.
+- **GUI refresh**: device cards show the real Android version and root
+  status (they used to claim "no root" for every phone, which also made
+  the Back up view announce standard mode), unauthorized/offline devices
+  say what to do, and the list refreshes itself. The Back up view states
+  what the device will give up before starting; a finished job shows
+  its summary as tiles with its warnings; backups can be filtered; the
+  package table says "APK only" instead of "ok" for apps whose data was
+  not captured.
 - **More personal data exported**: MMS with their attachments
   (`personal/mms.json`, `mms_parts/`), calendar events as iCalendar
   (`personal/calendar.ics`, local calendars included), and the system,

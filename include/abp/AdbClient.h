@@ -66,11 +66,8 @@ public:
 
     bool push(const std::string& localPath, const std::string& remotePath) const;
 
-    /// Copies `remotePath` off the device. When `showProgress` is true adb
-    /// writes its own progress display straight to the terminal instead of
-    /// being captured, which matters for trees big enough that a silent pull
-    /// is indistinguishable from a hang.
-    bool pull(const std::string& remotePath, const std::string& localPath, bool showProgress = false) const;
+    /// Copies `remotePath` off the device.
+    bool pull(const std::string& remotePath, const std::string& localPath) const;
 
     /// Like pull(), but preserves timestamps and modes (`adb pull -a`) and
     /// reports whether adb logged any per-file errors -- which for a
@@ -119,9 +116,6 @@ public:
     /// per package. Packages the device does not answer for keep whatever
     /// listPackages() already found.
     void resolveApkPaths(std::vector<PackageInfo>& packages) const;
-
-    /// Returns every APK path (base + splits) for one installed package.
-    std::vector<std::string> packageApkPaths(const std::string& packageName) const;
 
     /// Of `packageNames`, returns those reachable through `run-as` -- that is,
     /// the packages built with `android:debuggable="true"`. `run-as` executes

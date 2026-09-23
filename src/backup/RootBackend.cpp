@@ -6,6 +6,7 @@
 #include "abp/ArchiveIntegrity.h"
 #include "abp/FsUtil.h"
 #include "abp/Logger.h"
+#include "abp/Process.h"
 #include "abp/StringUtil.h"
 
 namespace abp {
@@ -60,7 +61,11 @@ void RootBackend::backupAppData(const AdbClient& adb, const fs::path& outDir,
     fs::path dataDir = outDir / "data";
     fsutil::ensureDirectory(dataDir);
 
+    const int total = static_cast<int>(packages.size());
+    int done = 0;
     for (const auto& pkg : packages) {
+        if (Process::cancelRequested()) return;
+        Logger::progress("Backing up app data", done++, total, pkg.name);
         PackageBackupEntry* entry = findPackageEntry(manifest, pkg.name);
         if (entry == nullptr) continue;
 
@@ -98,6 +103,7 @@ void RootBackend::backupAppData(const AdbClient& adb, const fs::path& outDir,
             entry->dataCaptureMethod = DataCaptureMethod::RootTar;
         }
     }
+    Logger::progress("Backing up app data", total, total);
 }
 
 std::string RootBackend::restoreTree(const AdbClient& adb, const std::string& parent, const std::string& packageName,
@@ -129,6 +135,8 @@ std::string RootBackend::restoreTree(const AdbClient& adb, const std::string& pa
 void RootBackend::restoreAppData(const AdbClient& adb, const fs::path& backupDir, Manifest& manifest,
                                   const std::vector<std::string>& packageFilter) {
     bool restoredSystemApp = false;
+    const int total = static_cast<int>(packageFilter.size());
+    int done = 0;
 
     for (auto& entry : manifest.packages) {
         if (!entry.dataIncluded || (entry.dataArchive.empty() && entry.deDataArchive.empty())) continue;
@@ -136,6 +144,8 @@ void RootBackend::restoreAppData(const AdbClient& adb, const fs::path& backupDir
             std::find(packageFilter.begin(), packageFilter.end(), entry.name) == packageFilter.end()) {
             continue;
         }
+        if (Process::cancelRequested()) break;
+        Logger::progress("Restoring app data", done++, total, entry.name);
         if (!strutil::isValidPackageName(entry.name)) {
             entry.error = "invalid package name, skipped restore";
             continue;
@@ -198,6 +208,8 @@ void RootBackend::restoreAppData(const AdbClient& adb, const fs::path& backupDir
 
         if (entry.isSystemApp) restoredSystemApp = true;
     }
+
+    Logger::progress("Restoring app data", total, total);
 
     // System providers (contacts, SMS, ...) run inside persistent system
     // processes that `am force-stop` does not stop, and they keep their

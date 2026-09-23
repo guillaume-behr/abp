@@ -155,8 +155,14 @@ invoked with an explicit argv array. Three modes:
   through this process's heap.
 - `runFromFile()` — the mirror image, for pushing an archive back in via
   a command's stdin.
-- `runInheritStdio()` — no redirection at all, so adb's own progress
-  display reaches the terminal during a multi-minute `adb pull`.
+
+A child given no input reads `/dev/null`, never abp's own stdin. And every
+mode can be cancelled: `Process::requestCancel()` (the GUI's Cancel
+button, the CLI's Ctrl-C) sends the running child SIGTERM, then SIGKILL
+after a grace period, and makes further `run*()` calls return at once
+until `clearCancel()`. The backup and restore loops check the same flag
+between packages, so a cancel stops at the next step boundary rather
+than halfway through writing the manifest.
 
 Two details matter because `abp gui` forks from a worker thread while
 other threads are serving HTTP:

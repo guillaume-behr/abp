@@ -104,7 +104,13 @@ std::vector<DeviceInfo> AdbClient::listConnectedDevices() {
             // Only `model` maps onto a DeviceInfo field here. `adb devices -l`
             // reports product/device/transport_id, none of which is the
             // manufacturer -- that comes from getprop in queryDeviceInfo().
-            if (key == "model") info.model = value;
+            // adb replaces spaces with underscores in this listing.
+            if (key == "model") {
+                for (char& c : value) {
+                    if (c == '_') c = ' ';
+                }
+                info.model = value;
+            }
         }
         devices.push_back(std::move(info));
     }
@@ -172,12 +178,12 @@ bool AdbClient::push(const std::string& localPath, const std::string& remotePath
     return Process::run(args).ok();
 }
 
-bool AdbClient::pull(const std::string& remotePath, const std::string& localPath, bool showProgress) const {
+bool AdbClient::pull(const std::string& remotePath, const std::string& localPath) const {
     auto args = baseArgs();
     args.push_back("pull");
     args.push_back(remotePath);
     args.push_back(localPath);
-    return showProgress ? Process::runInheritStdio(args).ok() : Process::run(args).ok();
+    return Process::run(args).ok();
 }
 
 bool AdbClient::pullTree(const std::string& remotePath, const std::string& localPath, bool* sawErrors,
@@ -325,25 +331,6 @@ DeviceInfo AdbClient::queryDeviceInfo() const {
 
     info.root = detectRoot();
     return info;
-}
-
-std::vector<std::string> AdbClient::packageApkPaths(const std::string& packageName) const {
-    std::vector<std::string> paths;
-    if (!strutil::isValidPackageName(packageName)) {
-        return paths;
-    }
-
-    bool ok = false;
-    std::string output = shellText("pm path " + strutil::shellQuote(packageName), &ok);
-    if (!ok) return paths;
-
-    for (const auto& rawLine : strutil::split(output, '\n')) {
-        std::string line = strutil::trim(rawLine);
-        if (strutil::startsWith(line, "package:")) {
-            paths.push_back(line.substr(std::string("package:").size()));
-        }
-    }
-    return paths;
 }
 
 std::vector<PackageInfo> AdbClient::listPackages(bool includeSystemApps) const {

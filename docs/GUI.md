@@ -58,10 +58,21 @@ subcommands.
   errors, any raw device-path captures and whether they are complete, and
   a file browser over the backup directory itself. No device needed.
 
-While a backup or restore runs, its log streams into a drawer at the
-bottom of the page — the same messages the CLI prints, plus the final
-summary. One job runs at a time; starting a second while one is in
-flight is refused.
+While a backup or restore runs, a drawer at the bottom of the page shows
+a progress bar for the current step (`Backing up app data · 12/48 ·
+com.example.app`), the live log, and a **Cancel** button. When the job
+ends, its summary appears as tiles above the log, followed by a *Before
+relying on this backup* list of everything that could not be captured
+(hardware-sealed apps, app data out of reach without root, personal data
+the device refused to share). A cancelled backup keeps what it captured.
+One job runs at a time; starting a second while one is in flight is
+refused.
+
+The **Devices** view refreshes itself every few seconds while it is on
+screen, and shows each phone's Android version and root status once
+abp has asked it (a few adb calls per device, done once). The **Back
+up** view says up front what the selected device will give up, and the
+**Explore** view can filter backups and verify one's checksums.
 
 ## Security model
 
@@ -106,9 +117,11 @@ curl -H "X-Abp-Token: $TOKEN" http://127.0.0.1:8787/api/devices
 | `GET` | `/api/backups?root=DIR` | Backups found under `DIR`. |
 | `GET` | `/api/backup?path=DIR` | One backup's summary and full manifest. |
 | `GET` | `/api/backup/files?path=DIR&sub=REL` | Directory listing inside a backup. |
+| `GET` | `/api/backup/verify?path=DIR` | Check every file against the manifest (as `abp verify`). |
 | `POST` | `/api/jobs/backup` | Start a backup. Body mirrors the CLI options. |
 | `POST` | `/api/jobs/restore` | Start a restore. |
 | `GET` | `/api/job?since=N` | Job state plus log lines from index `N` on. |
+| `POST` | `/api/job/cancel` | Cancel the running job. |
 | `POST` | `/api/job/dismiss` | Forget a finished job. |
 | `POST` | `/api/shutdown` | Stop the server (what the "Stop server" button calls). |
 

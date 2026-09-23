@@ -12,6 +12,8 @@ struct ProcessResult {
     std::string stdErr;
     /// True if the process could not even be started (e.g. binary not found).
     bool spawnFailed = false;
+    /// True if it was stopped (or never started) because of requestCancel().
+    bool cancelled = false;
 
     bool ok() const { return !spawnFailed && exitCode == 0; }
 };
@@ -39,15 +41,13 @@ public:
     /// tar archive into an on-device restore command) without buffering it.
     static ProcessResult runFromFile(const std::vector<std::string>& args, const std::string& inputPath);
 
-    /// Runs `args` with this process' own stdout and stderr, so the child
-    /// writes straight to the terminal. Nothing is captured: the returned
-    /// ProcessResult carries only the exit code.
-    ///
-    /// Use this for bulk transfers (`adb pull` of a large tree), where adb's
-    /// own progress display is the only sign of life during an operation that
-    /// can run for many minutes. Capturing that output instead would make a
-    /// multi-gigabyte pull look like a hang.
-    static ProcessResult runInheritStdio(const std::vector<std::string>& args);
+    /// Cancels the operation in progress: every running child is sent
+    /// SIGTERM (SIGKILL if it lingers), and every run*() call made until
+    /// clearCancel() returns at once with `cancelled` set instead of starting
+    /// a process. Safe to call from any thread or a signal handler.
+    static void requestCancel();
+    static void clearCancel();
+    static bool cancelRequested();
 };
 
 } // namespace abp

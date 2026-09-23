@@ -1,8 +1,10 @@
 #include "abp/Process.h"
 
 #include <array>
+#include <atomic>
 #include <cerrno>
-#include <cstdio>
+#include <chrono>
+#include <ctime>
 #include <csignal>
 #include <cstring>
 #include <fcntl.h>
@@ -12,6 +14,50 @@
 
 namespace abp {
 namespace {
+
+/// Lock-free so requestCancel() stays async-signal-safe (the CLI calls it
+/// from its SIGINT handler).
+std::atomic<bool> g_cancelRequested{false};
+
+/// How long a child gets to exit after SIGTERM before it is killed outright.
+constexpr auto kTerminateGrace = std::chrono::seconds(2);
+
+/// Sends SIGTERM on the first call after a cancel request, and SIGKILL once
+/// the grace period has passed. Returns true once a signal has been sent.
+class CancelWatch {
+public:
+    explicit CancelWatch(pid_t pid) : pid_(pid) {}
+
+    void check() {
+        if (!g_cancelRequested.load()) return;
+        const auto now = std::chrono::steady_clock::now();
+        if (!terminated_) {
+            ::kill(pid_, SIGTERM);
+            terminated_ = true;
+            terminatedAt_ = now;
+        } else if (!killed_ && now - terminatedAt_ > kTerminateGrace) {
+            ::kill(pid_, SIGKILL);
+            killed_ = true;
+        }
+    }
+
+    bool fired() const { return terminated_; }
+
+private:
+    pid_t pid_;
+    bool terminated_ = false;
+    bool killed_ = false;
+    std::chrono::steady_clock::time_point terminatedAt_{};
+};
+
+/// Result for a run*() call made while a cancel is pending.
+ProcessResult cancelledResult() {
+    ProcessResult result;
+    result.spawnFailed = true;
+    result.cancelled = true;
+    result.stdErr = "cancelled";
+    return result;
+}
 
 /// RAII wrapper around a file descriptor.
 class Fd {
@@ -181,7 +227,8 @@ void setNonBlocking(int fd) {
 /// tells the child its input has ended), so it is taken by reference and the
 /// close is recorded in the Fd itself rather than leaving the caller holding
 /// a descriptor number that has already been handed back to the kernel.
-void pumpIo(Fd& stdinPipe, int stdoutFd, int stderrFd, const std::string* stdinData, ProcessResult& result) {
+void pumpIo(Fd& stdinPipe, int stdoutFd, int stderrFd, const std::string* stdinData, ProcessResult& result,
+            CancelWatch& cancel) {
     const int stdinFd = stdinPipe.get();
     if (stdinFd >= 0) setNonBlocking(stdinFd);
     if (stdoutFd >= 0) setNonBlocking(stdoutFd);
@@ -211,7 +258,10 @@ void pumpIo(Fd& stdinPipe, int stdoutFd, int stderrFd, const std::string* stdinD
             fds.push_back({stderrFd, POLLIN, 0});
         }
 
-        int rc = poll(fds.data(), static_cast<nfds_t>(fds.size()), -1);
+        // A bounded wait, so a cancel request is noticed even while the child
+        // is silent (a long `adb pull` writes nothing we capture).
+        int rc = poll(fds.data(), static_cast<nfds_t>(fds.size()), 200);
+        cancel.check();
         if (rc < 0) {
             if (errno == EINTR) continue;
             break;
@@ -276,14 +326,27 @@ void pumpIo(Fd& stdinPipe, int stdoutFd, int stderrFd, const std::string* stdinD
 /// Reaps `pid` and translates its wait status into a ProcessResult exit code.
 /// A child killed by a signal is reported as 128+signo, matching the
 /// convention shells use, so callers can tell "adb died" from "adb exited 1".
-void reap(pid_t pid, ProcessResult& result) {
+void reap(pid_t pid, ProcessResult& result, CancelWatch& cancel) {
+    // Polled rather than a blocking waitpid() so a cancel request can reach
+    // a child that is still running. The pause starts at 1 ms and backs off,
+    // so the many short adb calls (which have usually exited by the time
+    // their pipes close) pay almost nothing for it.
     int status = 0;
-    while (waitpid(pid, &status, 0) < 0) {
-        if (errno != EINTR) {
+    long pauseMs = 1;
+    while (true) {
+        const pid_t done = waitpid(pid, &status, WNOHANG);
+        if (done == pid) break;
+        if (done < 0 && errno != EINTR) {
             result.exitCode = -1;
+            result.cancelled = cancel.fired();
             return;
         }
+        cancel.check();
+        timespec pause{0, pauseMs * 1000 * 1000};
+        nanosleep(&pause, nullptr);
+        pauseMs = pauseMs < 50 ? pauseMs * 2 : 50;
     }
+    result.cancelled = cancel.fired();
     if (WIFEXITED(status)) {
         result.exitCode = WEXITSTATUS(status);
     } else if (WIFSIGNALED(status)) {
@@ -301,6 +364,7 @@ ProcessResult Process::run(const std::vector<std::string>& args, const std::stri
         result.spawnFailed = true;
         return result;
     }
+    if (g_cancelRequested.load()) return cancelledResult();
     ignoreSigPipeOnce();
 
     Pipe inPipe;
@@ -348,9 +412,10 @@ ProcessResult Process::run(const std::vector<std::string>& args, const std::stri
     outPipe.write().close();
     errPipe.write().close();
 
-    pumpIo(inPipe.write(), outPipe.read().get(), errPipe.read().get(), stdinData, result);
+    CancelWatch cancel(pid);
+    pumpIo(inPipe.write(), outPipe.read().get(), errPipe.read().get(), stdinData, result, cancel);
 
-    reap(pid, result);
+    reap(pid, result, cancel);
     return result;
 }
 
@@ -360,6 +425,7 @@ ProcessResult Process::runToFile(const std::vector<std::string>& args, const std
         result.spawnFailed = true;
         return result;
     }
+    if (g_cancelRequested.load()) return cancelledResult();
     ignoreSigPipeOnce();
 
     Fd outFile(open(outputPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644));
@@ -399,40 +465,10 @@ ProcessResult Process::runToFile(const std::vector<std::string>& args, const std
     errPipe.write().close();
 
     Fd noStdin;
-    pumpIo(noStdin, -1, errPipe.read().get(), nullptr, result);
+    CancelWatch cancel(pid);
+    pumpIo(noStdin, -1, errPipe.read().get(), nullptr, result, cancel);
 
-    reap(pid, result);
-    return result;
-}
-
-ProcessResult Process::runInheritStdio(const std::vector<std::string>& args) {
-    ProcessResult result;
-    if (args.empty()) {
-        result.spawnFailed = true;
-        return result;
-    }
-    ignoreSigPipeOnce();
-
-    // Anything this process has buffered must reach the terminal before the
-    // child starts writing to the same fds, or abp's own log lines would
-    // surface after output the child produced later.
-    std::fflush(nullptr);
-
-    auto argv = buildArgv(args);
-
-    pid_t pid = fork();
-    if (pid < 0) {
-        result.spawnFailed = true;
-        return result;
-    }
-
-    if (pid == 0) {
-        // No redirection at all: the child inherits stdin/stdout/stderr.
-        execvp(argv[0], argv.data());
-        _exit(127);
-    }
-
-    reap(pid, result);
+    reap(pid, result, cancel);
     return result;
 }
 
@@ -442,6 +478,7 @@ ProcessResult Process::runFromFile(const std::vector<std::string>& args, const s
         result.spawnFailed = true;
         return result;
     }
+    if (g_cancelRequested.load()) return cancelledResult();
     ignoreSigPipeOnce();
 
     Fd inFile(open(inputPath.c_str(), O_RDONLY | O_CLOEXEC));
@@ -482,10 +519,15 @@ ProcessResult Process::runFromFile(const std::vector<std::string>& args, const s
     errPipe.write().close();
 
     Fd noStdin;
-    pumpIo(noStdin, outPipe.read().get(), errPipe.read().get(), nullptr, result);
+    CancelWatch cancel(pid);
+    pumpIo(noStdin, outPipe.read().get(), errPipe.read().get(), nullptr, result, cancel);
 
-    reap(pid, result);
+    reap(pid, result, cancel);
     return result;
 }
+
+void Process::requestCancel() { g_cancelRequested.store(true); }
+void Process::clearCancel() { g_cancelRequested.store(false); }
+bool Process::cancelRequested() { return g_cancelRequested.load(); }
 
 } // namespace abp

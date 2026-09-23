@@ -32,4 +32,7 @@ bool isValidPackageName(const std::string& name);
 /// Formats a byte count as a short human-readable string, e.g. "12.3 MB".
 std::string formatBytes(unsigned long long bytes);
 
+/// The current time as an ISO 8601 UTC timestamp, e.g. "2026-01-01T12:00:00Z".
+std::string utcTimestamp();
+
 } // namespace abp::strutil

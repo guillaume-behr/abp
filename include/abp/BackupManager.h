@@ -11,6 +11,7 @@ namespace abp {
 
 struct BackupSummary {
     bool success = false;
+    bool cancelled = false; ///< Stopped by Process::requestCancel().
     std::string mode; ///< "root" or "standard"
     int packageCount = 0;
     int packagesWithData = 0;
@@ -53,6 +54,7 @@ struct BackupSummary {
 
 struct RestoreSummary {
     bool success = false;
+    bool cancelled = false; ///< Stopped by Process::requestCancel().
     int packagesRestored = 0;
     int packagesFailed = 0;
     /// Selected, but the backup held nothing to write back for them -- no

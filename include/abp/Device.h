@@ -10,6 +10,16 @@ enum class RootMethod {
     AdbdRoot,   ///< adbd itself is already running as root (`adb root` / userdebug builds).
 };
 
+/// Human-readable description of how root is reached, for `abp info` and the GUI.
+inline const char* describeRootMethod(RootMethod method) {
+    switch (method) {
+        case RootMethod::AdbdRoot: return "adbd already running as root";
+        case RootMethod::SuBinary: return "su binary available";
+        case RootMethod::None: return "none";
+    }
+    return "none";
+}
+
 struct RootAccess {
     RootMethod method = RootMethod::None;
 

@@ -164,16 +164,32 @@ td.num, th.num { text-align: right; white-space: nowrap; }
 #job pre {
     margin: 0;
     padding: 12px 20px;
-    max-height: 260px;
-    overflow: auto;
     background: var(--bg);
-    border-top: 1px solid var(--border);
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: 12px;
     white-space: pre-wrap;
     word-break: break-word;
 }
-#job.collapsed pre { display: none; }
+#job.collapsed #job-body { display: none; }
+#job-body { max-height: 55vh; overflow: auto; border-top: 1px solid var(--border); }
+#job-result { padding: 12px 20px 0; }
+#job-result:empty { display: none; }
+.progress { display: flex; align-items: center; gap: 12px; padding: 0 20px 10px; }
+.progress[hidden] { display: none; }
+.progress-track { flex: 1; height: 6px; border-radius: 999px; background: var(--panel-2); overflow: hidden; }
+.progress-fill { height: 100%; width: 0; background: var(--accent); transition: width .3s ease; }
+.progress-text { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 55%; }
+.stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin-bottom: 12px; }
+.stat { background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+.stat .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+.stat .v { font-size: 15px; font-weight: 600; margin-top: 2px; overflow-wrap: anywhere; }
+.stat .v.muted { font-weight: 400; font-size: 13px; }
+.banner ul { margin: 6px 0 0; padding-left: 18px; }
+.banner li { margin: 3px 0; }
+.banner.good { border-color: var(--good); color: var(--good); }
+.logo { display: inline-flex; align-items: center; gap: 8px; }
+.logo svg { width: 22px; height: 22px; color: var(--accent); }
+.device .hint-line { color: var(--muted); font-size: 12px; margin-top: 8px; }
 #job .line.warn { color: var(--warn); }
 #job .line.error { color: var(--bad); }
 #job .line.debug { color: var(--muted); }
@@ -199,7 +215,9 @@ dialog::backdrop { background: rgba(0,0,0,.5); }
     position: fixed; right: 16px; top: 70px; z-index: 20;
     background: var(--panel); border: 1px solid var(--bad); color: var(--bad);
     padding: 10px 14px; border-radius: 8px; max-width: 420px; display: none;
+    box-shadow: 0 6px 24px rgba(0,0,0,.18);
 }
+.toast.ok { border-color: var(--good); color: var(--good); }
 .toast.visible { display: block; }
 </style>
 </head>
@@ -207,7 +225,7 @@ dialog::backdrop { background: rgba(0,0,0,.5); }
 
 <div class="topbar">
 <header>
-    <h1>📱🔒 abp</h1>
+    <h1 class="logo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="2" width="12" height="20" rx="2.5"/><path d="M12 8v6m-3-3 3 3 3-3"/><path d="M10 18h4"/></svg>abp</h1>
     <span class="version" id="version"></span>
     <span class="spacer"></span>
     <span id="adb-state" class="badge"></span>
@@ -238,6 +256,7 @@ dialog::backdrop { background: rgba(0,0,0,.5); }
     <h2>Back up a device</h2>
     <p class="hint">Captures APKs, private app data, shared storage, contacts and messages into a new backup directory.</p>
     <div id="backup-device-banner"></div>
+    <div id="backup-coverage"></div>
 
     <div class="card">
         <h3>Destination</h3>
@@ -265,9 +284,9 @@ dialog::backdrop { background: rgba(0,0,0,.5); }
         <div class="row">
             <label class="toggle"><input type="radio" name="b-mode" value="auto" checked><span><span class="t">Auto</span><small>root if available</small></span></label>
             <label class="toggle"><input type="radio" name="b-mode" value="root"><span><span class="t">Root</span><small>fail if unavailable</small></span></label>
-            <label class="toggle"><input type="radio" name="b-mode" value="standard"><span><span class="t">Standard</span><small>adb backup, no root</small></span></label>
+            <label class="toggle"><input type="radio" name="b-mode" value="standard"><span><span class="t">Standard</span><small>run-as + adb backup, no root</small></span></label>
         </div>
-        <p class="hint" style="margin:10px 0 0">Standard mode needs you to confirm the backup on the device screen, and only captures apps that allow it.</p>
+        <p class="hint" style="margin:10px 0 0">Without root, private app data is captured completely only for debuggable apps; the rest goes through legacy <span class="mono">adb backup</span>, which may ask you to confirm on the phone and captures little on Android 12+.</p>
     </div>
 
     <div class="card">
@@ -342,6 +361,7 @@ dialog::backdrop { background: rgba(0,0,0,.5); }
             <button class="btn" id="scan-backups">Scan</button>
             <span class="muted" id="explore-status"></span>
         </div>
+        <input type="text" id="explore-filter" placeholder="Filter by name, device or date…" style="margin-top:10px">
     </div>
     <div class="grid" id="backup-list"></div>
     <div id="backup-detail"></div>
@@ -356,9 +376,17 @@ dialog::backdrop { background: rgba(0,0,0,.5); }
         <span class="muted mono" id="job-target"></span>
         <span class="spacer" style="flex:1"></span>
         <span class="muted" id="job-toggle-hint">click to expand</span>
+        <button class="btn small danger" id="job-cancel" style="display:none">Cancel</button>
         <button class="btn small" id="job-dismiss" style="display:none">Dismiss</button>
     </div>
-    <pre id="job-log"></pre>
+    <div class="progress" id="job-progress" hidden>
+        <div class="progress-track"><div class="progress-fill" id="job-progress-fill"></div></div>
+        <span class="progress-text" id="job-progress-text"></span>
+    </div>
+    <div id="job-body">
+        <div id="job-result"></div>
+        <pre id="job-log"></pre>
+    </div>
 </div>
 
 <div class="toast" id="toast"></div>
@@ -387,6 +415,7 @@ if (token) {
 const state = {
     status: null,
     devices: [],
+    details: {},        // serial -> full device info (Android version, root), fetched once per device
     serial: "",
     packages: [],
     backups: [],
@@ -400,13 +429,16 @@ const state = {
 
 const $ = (id) => document.getElementById(id);
 
-function showError(message) {
+function showToast(message, kind) {
     const toast = $("toast");
     toast.textContent = message;
+    toast.classList.toggle("ok", kind === "ok");
     toast.classList.add("visible");
-    clearTimeout(showError.timer);
-    showError.timer = setTimeout(() => toast.classList.remove("visible"), 6000);
+    clearTimeout(showToast.timer);
+    showToast.timer = setTimeout(() => toast.classList.remove("visible"), 6000);
 }
+
+function showError(message) { showToast(message, "error"); }
 
 async function api(path, options = {}) {
     const response = await fetch(path, {
@@ -480,14 +512,14 @@ async function loadStatus() {
     applyJob(state.status.job, true);
 }
 
-async function loadDevices() {
-    $("devices-status").textContent = "Looking for devices…";
+async function loadDevices(quiet) {
+    if (quiet !== true) $("devices-status").textContent = "Looking for devices…";
     try {
         const payload = await api("/api/devices");
         state.devices = payload.devices || [];
     } catch (error) {
         $("devices-status").textContent = "";
-        showError(error.message);
+        if (quiet !== true) showError(error.message);
         return;
     }
     $("devices-status").textContent = "";
@@ -498,7 +530,32 @@ async function loadDevices() {
     }
     renderDevices();
     renderDeviceBanners();
+    loadDeviceDetails();
 }
+
+// `adb devices` only knows serials and states; Android version and root
+// status need a few more adb calls, so they are fetched once per device.
+async function loadDeviceDetails() {
+    for (const device of state.devices) {
+        if (!device.ready || state.details[device.serial]) continue;
+        state.details[device.serial] = { pending: true };
+        try {
+            state.details[device.serial] = await api("/api/device?serial=" + encodeURIComponent(device.serial));
+        } catch (error) {
+            delete state.details[device.serial];
+            continue;
+        }
+        renderDevices();
+        renderDeviceBanners();
+        if (state.manifest) renderRestoreManifest();
+    }
+}
+
+const stateHints = {
+    unauthorized: "Unlock the phone and accept the “Allow USB debugging?” prompt.",
+    offline: "Reconnect the USB cable, or run adb reconnect.",
+    "no permissions": "adb cannot open this device; on Linux check its udev rule.",
+};
 
 function renderDevices() {
     const container = $("devices");
@@ -508,7 +565,8 @@ function renderDevices() {
             "No devices found. Connect the device over USB, enable USB debugging, and accept the “Allow USB debugging?” prompt."));
         return;
     }
-    for (const device of state.devices) {
+    for (const listed of state.devices) {
+        const device = withDetails(listed);
         const card = el("div", { class: "device" + (device.serial === state.serial ? " selected" : "") });
         card.addEventListener("click", () => {
             if (!device.ready) return;
@@ -522,17 +580,26 @@ function renderDevices() {
         card.append(el("div", { class: "serial", text: device.serial }));
         const badges = el("div", { class: "row", style: "margin-top:8px" });
         badges.append(el("span", { class: "badge " + (device.ready ? "good" : "bad"), text: device.state }));
-        if (device.ready) {
+        if (device.ready && device.detailed) {
             badges.append(el("span", { class: "badge", text: "Android " + (device.android_release || "?") + " · SDK " + device.sdk_int }));
             badges.append(el("span", { class: "badge " + (device.rooted ? "good" : ""), text: device.rooted ? "root: " + device.root_method : "no root" }));
+        } else if (device.ready) {
+            badges.append(el("span", { class: "badge" }, el("span", { class: "spinner", style: "width:9px;height:9px;vertical-align:-1px" }), " checking…"));
         }
         card.append(badges);
+        if (stateHints[device.state]) card.append(el("div", { class: "hint-line", text: stateHints[device.state] }));
         container.append(card);
     }
 }
 
+function withDetails(device) {
+    const details = state.details[device.serial];
+    return details && !details.pending ? { ...device, ...details, state: device.state, ready: device.ready, detailed: true } : device;
+}
+
 function currentDevice() {
-    return state.devices.find((d) => d.serial === state.serial) || null;
+    const device = state.devices.find((d) => d.serial === state.serial);
+    return device ? withDetails(device) : null;
 }
 
 function renderDeviceBanners() {
@@ -544,11 +611,11 @@ function renderDeviceBanners() {
             node.append(el("div", { class: "banner warn" }, "No device selected — pick one on the Devices tab first."));
         } else {
             const label = [device.manufacturer, device.model].filter(Boolean).join(" ") || device.serial;
-            node.append(el("div", { class: "banner" },
-                "Target: " + label + " (" + device.serial + ")" +
-                (device.rooted ? " · root available" : " · no root — standard mode")));
+            const rootText = !device.detailed ? " · checking root…" : device.rooted ? " · root available" : " · no root — standard mode";
+            node.append(el("div", { class: "banner" }, "Target: " + label + " (" + device.serial + ")" + rootText));
         }
     }
+    renderBackupCoverage();
     $("load-packages").disabled = !currentDevice();
     $("start-backup").disabled = !currentDevice();
     updateRestoreButton();
@@ -556,7 +623,31 @@ function renderDeviceBanners() {
 
 /* --------------------------------------------------------------- backup */
 
-$("refresh-devices").addEventListener("click", loadDevices);
+// What this device will and will not give up, said before the backup rather
+// than discovered after it.
+function renderBackupCoverage() {
+    const node = $("backup-coverage");
+    node.textContent = "";
+    const device = currentDevice();
+    if (!device || !device.detailed) return;
+    if (device.rooted) {
+        node.append(el("div", { class: "banner good" },
+            "Root available: every app's private data can be captured, alongside photos, files, contacts, messages and Wi-Fi networks."));
+    } else {
+        node.append(el("div", { class: "banner warn" },
+            "No root: photos, files, APKs, contacts, messages, calendar and settings are backed up, but most apps' private data " +
+            "(logins, chats, game saves) cannot be read without root. The summary lists exactly what was missed."));
+    }
+}
+
+// Refresh the device list while the Devices tab is on screen, so plugging a
+// phone in (or accepting its prompt) shows up without clicking Refresh.
+setInterval(() => {
+    const onDevices = $("view-devices").classList.contains("active");
+    if (onDevices && document.visibilityState === "visible" && !state.jobRunning) loadDevices(true);
+}, 5000);
+
+$("refresh-devices").addEventListener("click", () => loadDevices());
 
 $("suggest-output").addEventListener("click", () => {
     const device = currentDevice();
@@ -704,8 +795,17 @@ function renderRestoreManifest() {
     for (const item of manifest.personal_data_exports || []) facts.append(el("span", { class: "badge", text: personalLabel(item) }));
     node.append(facts);
 
+    const kinds = (manifest.personal_data_exports || []).map((item) => item.kind);
+    const brought = [kinds.includes("contacts") && "contacts (copied to Download for import)",
+        kinds.includes("calendar") && "calendar (copied to Download for import)",
+        kinds.includes("wifi") && "Wi-Fi networks (re-added on Android 11+)"].filter(Boolean);
+    if (brought.length) {
+        node.append(el("div", { class: "hint", style: "margin-top:8px", text: "Personal data restored: " + brought.join(", ") +
+            ". SMS, MMS, call log and settings stay in the backup as a readable archive." }));
+    }
+
     const target = currentDevice();
-    if (manifest.mode === "root" && target && !target.rooted) {
+    if (manifest.mode === "root" && target && target.detailed && !target.rooted) {
         node.append(el("div", { class: "banner warn", style: "margin-top:10px" },
             "This backup needs root to restore app data, but the selected device is not rooted — only APKs will be reinstalled."));
     }
@@ -796,6 +896,8 @@ async function scanBackups() {
     renderBackupList();
 }
 
+$("explore-filter").addEventListener("input", renderBackupList);
+
 function renderBackupList() {
     const container = $("backup-list");
     container.textContent = "";
@@ -803,7 +905,14 @@ function renderBackupList() {
         container.append(el("div", { class: "banner" }, "No backups under this folder. abp looks for directories containing a manifest.json."));
         return;
     }
-    for (const backup of state.backups) {
+    const filter = $("explore-filter").value.trim().toLowerCase();
+    const shown = state.backups.filter((b) => !filter ||
+        [b.name, b.device_model, b.device_manufacturer, b.device_serial, b.created_at, b.path].join(" ").toLowerCase().includes(filter));
+    if (shown.length === 0) {
+        container.append(el("div", { class: "muted", text: "No backup matches that filter." }));
+        return;
+    }
+    for (const backup of shown) {
         const card = el("div", { class: "device" });
         card.addEventListener("click", () => openBackup(backup.path));
         card.append(el("h4", { text: backup.name }));
@@ -858,13 +967,36 @@ async function openBackup(path) {
         selectView("restore");
         loadRestoreManifest(summary.path);
     }, text: "Restore this backup" }));
+    const verifyResult = el("div", { style: "flex-basis:100%" });
+    const verifyButton = el("button", { class: "btn", text: "Verify checksums", onclick: async () => {
+        verifyButton.disabled = true;
+        verifyResult.textContent = "";
+        verifyResult.append(el("span", { class: "muted" }, el("span", { class: "spinner", style: "vertical-align:-2px" }), " Checking every file…"));
+        try {
+            const report = await api("/api/backup/verify?path=" + encodeURIComponent(summary.path));
+            verifyResult.textContent = "";
+            const counts = report.verified + " checksum(s) matched, " + report.unverifiable + " file(s) present without a checksum.";
+            if (report.ok) {
+                verifyResult.append(el("div", { class: "banner good", text: "Backup intact: " + counts }));
+            } else {
+                const list = el("ul");
+                for (const problem of report.problems) list.append(el("li", { class: "mono", text: problem.path + ": " + problem.problem }));
+                verifyResult.append(el("div", { class: "banner bad" }, report.problems.length + " problem(s) found. " + counts, list));
+            }
+        } catch (error) {
+            verifyResult.textContent = "";
+            showError(error.message);
+        }
+        verifyButton.disabled = false;
+    } });
+    actions.append(verifyButton, verifyResult);
     card.append(actions);
 
     card.append(el("h3", { text: "Packages" }));
     const scroll = el("div", { class: "scroll" });
     const table = el("table");
     const head = el("tr");
-    for (const column of ["Package", "APKs", "Data", "Captured via", "External", "Status"]) head.append(el("th", { text: column }));
+    for (const column of ["Package", "APKs", "Data", "Captured via", "Status"]) head.append(el("th", { text: column }));
     table.append(head);
     for (const pkg of manifest.packages) {
         const row = el("tr");
@@ -874,10 +1006,12 @@ async function openBackup(path) {
         const legacy = pkg.data_capture_method === "legacy_adb_backup";
         row.append(el("td", { class: "num", text: pkg.data_included ? (legacy ? "in .ab" : pkg.data_size_human) : "—" }));
         row.append(el("td", { class: "muted", text: pkg.data_included ? captureMethodLabel(pkg.data_capture_method) : "—" }));
-        row.append(el("td", { class: "num", text: pkg.external_data_included ? pkg.external_data_size_human : "—" }));
-        row.append(el("td", {}, pkg.error
-            ? el("span", { class: "err", text: pkg.error })
-            : el("span", { class: "badge good", text: "ok" })));
+        let status;
+        if (pkg.error) status = el("span", { class: "err", text: pkg.error });
+        else if (pkg.data_included) status = el("span", { class: "badge good", text: "ok" });
+        else if (pkg.apk_included) status = el("span", { class: "badge", title: "The app's private data was not captured", text: "APK only" });
+        else status = el("span", { class: "badge", text: "nothing captured" });
+        row.append(el("td", {}, status));
         table.append(row);
     }
     scroll.append(table);
@@ -986,8 +1120,26 @@ async function browseFiles(backupPath, sub, container) {
 /* ------------------------------------------------------------------ job */
 
 $("job-bar").addEventListener("click", (event) => {
-    if (event.target.id === "job-dismiss") return;
+    if (event.target.id === "job-dismiss" || event.target.id === "job-cancel") return;
     $("job").classList.toggle("collapsed");
+    updateJobToggleHint();
+});
+
+function updateJobToggleHint() {
+    $("job-toggle-hint").textContent = $("job").classList.contains("collapsed") ? "click to expand" : "click to collapse";
+}
+
+$("job-cancel").addEventListener("click", async (event) => {
+    event.stopPropagation();
+    const ok = await ask("Cancel this job?", "The running step is stopped. A cancelled backup keeps what it captured so far; " +
+        "a cancelled restore may leave the device partly restored.");
+    if (!ok) return;
+    try {
+        const payload = await api("/api/job/cancel", { method: "POST" });
+        applyJob(payload.job, false);
+    } catch (error) {
+        showError(error.message);
+    }
 });
 
 $("job-dismiss").addEventListener("click", async (event) => {
@@ -1002,6 +1154,7 @@ $("job-dismiss").addEventListener("click", async (event) => {
     state.logShown = 0;
     $("job").classList.remove("visible");
     $("job-log").textContent = "";
+    $("job-result").textContent = "";
 });
 
 function applyJob(job, expand) {
@@ -1013,21 +1166,31 @@ function applyJob(job, expand) {
     }
 
     if (job.id !== state.jobId) {
+        // Only announce a job this page watched run, not one that had
+        // already finished before the page was opened.
+        state.announce = job.state === "running";
         state.jobId = job.id;
         state.logShown = 0;
         $("job-log").textContent = "";
+        $("job-result").textContent = "";
+        delete $("job-result").dataset.resultFor;
     }
 
     panel.classList.add("visible");
     if (expand) panel.classList.remove("collapsed");
+    updateJobToggleHint();
 
     const running = job.state === "running";
+    state.jobRunning = running;
     $("job-icon").textContent = "";
-    $("job-icon").append(running ? el("span", { class: "spinner" })
-        : el("span", { text: job.state === "succeeded" ? "✅" : "❌" }));
-    $("job-title").textContent = (job.kind === "backup" ? "Backup" : "Restore") + " · " + job.state;
+    $("job-icon").append(running ? el("span", { class: "spinner" }) : stateBadge(job.state));
+    // Once finished the badge carries the state; the title only needs it while running.
+    const what = job.kind === "backup" ? "Backup" : "Restore";
+    $("job-title").textContent = !running ? what : what + " · " + (job.cancelling ? "cancelling…" : "running");
     $("job-target").textContent = job.target;
     $("job-dismiss").style.display = running ? "none" : "inline-block";
+    $("job-cancel").style.display = running && !job.cancelling ? "inline-block" : "none";
+    renderProgress(job);
 
     const log = $("job-log");
     const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
@@ -1043,70 +1206,100 @@ function applyJob(job, expand) {
     state.logShown = Math.max(state.logShown, job.log_size);
     if (atBottom) log.scrollTop = log.scrollHeight;
 
-    if (!running && job.result) appendResult(job);
+    if (!running && job.result) renderResult(job);
 
     if (running) startPolling();
     else {
         stopPolling();
-        loadDevices();
+        loadDevices(true);
         if (job.kind === "backup" && job.state === "succeeded") scanBackups();
     }
 }
 
-function appendResult(job) {
-    const log = $("job-log");
-    if (log.dataset.resultFor === String(job.id)) return;
-    log.dataset.resultFor = String(job.id);
+function stateBadge(jobState) {
+    const kind = { succeeded: "good", failed: "bad", cancelled: "warn" }[jobState] || "";
+    return el("span", { class: "badge " + kind, text: jobState });
+}
+
+function renderProgress(job) {
+    const bar = $("job-progress");
+    const progress = job.progress || {};
+    bar.hidden = job.state !== "running" || !progress.total;
+    if (bar.hidden) return;
+    const percent = Math.min(100, Math.round((progress.done / progress.total) * 100));
+    $("job-progress-fill").style.width = percent + "%";
+    $("job-progress-text").textContent = progress.step + " · " + progress.done + "/" + progress.total +
+        (progress.item && progress.done < progress.total ? " · " + progress.item : "");
+}
+
+function stat(label, value, muted) {
+    return el("div", { class: "stat" }, el("div", { class: "k", text: label }),
+        el("div", { class: "v" + (muted ? " muted" : ""), text: String(value) }));
+}
+
+// The finished job's summary as tiles plus warning/error banners, above the
+// raw log: the same facts the CLI prints, in a form that can be scanned.
+function renderResult(job) {
+    const node = $("job-result");
+    if (node.dataset.resultFor === String(job.id)) return;
+    node.dataset.resultFor = String(job.id);
+    node.textContent = "";
 
     const result = job.result || {};
-    const lines = [];
+    const stats = el("div", { class: "stats" });
     if (job.kind === "backup") {
-        lines.push("Packages:       " + (result.package_count ?? 0));
-        lines.push("With app data:  " + (result.packages_with_data ?? 0));
-        if (result.packages_via_root_tar) lines.push("  via root tar:   " + result.packages_via_root_tar);
-        if (result.packages_via_run_as) lines.push("  via run-as:     " + result.packages_via_run_as + " (complete per-app archives)");
-        if (result.packages_via_legacy_backup) lines.push("  via adb backup: " + result.packages_via_legacy_backup + " (partial; apps may have opted out)");
-        lines.push("Errors:         " + (result.packages_with_errors ?? 0));
-        lines.push("Shared storage: " + (result.shared_storage_included ? "included" : "skipped"));
-        if (result.removable_storage_count) lines.push("SD cards:       " + result.removable_storage_count + " copied");
+        stats.append(stat("Packages", result.package_count ?? 0));
+        const via = [result.packages_via_root_tar && result.packages_via_root_tar + " root",
+            result.packages_via_run_as && result.packages_via_run_as + " run-as",
+            result.packages_via_legacy_backup && result.packages_via_legacy_backup + " adb backup"].filter(Boolean).join(", ");
+        stats.append(stat("With app data", (result.packages_with_data ?? 0) + (via ? " (" + via + ")" : "")));
+        if (result.packages_with_errors) stats.append(stat("With errors", result.packages_with_errors));
+        stats.append(stat("Shared storage", result.shared_storage_included ? "included" : "skipped"));
+        if (result.removable_storage_count) stats.append(stat("SD cards", result.removable_storage_count));
         for (const item of result.personal_exports || []) {
-            lines.push((item.label + ":").padEnd(16) + (item.count < 0 ? "not exported (" + item.reason + ")" : String(item.count)));
+            stats.append(item.count < 0 ? stat(item.label, "not exported", true) : stat(item.label, item.count));
         }
         if (result.filesystem_capture_count) {
-            lines.push("Device paths:   " + result.filesystem_capture_count + " pulled" +
-                (result.filesystem_partial_count ? " (" + result.filesystem_partial_count + " only partially readable)" : ""));
+            stats.append(stat("Device paths", result.filesystem_capture_count +
+                (result.filesystem_partial_count ? " (" + result.filesystem_partial_count + " partial)" : "")));
         }
-        lines.push("Total size:     " + (result.total_size_human || "0 B"));
-        lines.push("Output:         " + (result.output_dir || job.target));
-        if ((result.warnings || []).length) {
-            lines.push("");
-            lines.push("Before relying on this backup:");
-            for (const warning of result.warnings) lines.push("  - " + warning);
-        }
+        stats.append(stat("Total size", result.total_size_human || "0 B"));
     } else {
-        lines.push("Packages restored: " + (result.packages_restored ?? 0));
-        lines.push("Packages failed:   " + (result.packages_failed ?? 0));
-        if (result.packages_skipped) lines.push("Nothing to restore: " + result.packages_skipped + " (no APK and no data in the backup)");
-        lines.push("Shared storage:    " + (result.shared_storage_restored ? "restored" : "skipped"));
-        if (result.contacts_import_path) {
-            lines.push("Contacts:          copied to " + result.contacts_import_path + " (Contacts > Settings > Import)");
-        }
-        if (result.calendar_import_path) {
-            lines.push("Calendar:          copied to " + result.calendar_import_path + " (open it to import)");
-        }
+        stats.append(stat("Restored", result.packages_restored ?? 0));
+        stats.append(stat("Failed", result.packages_failed ?? 0));
+        if (result.packages_skipped) stats.append(stat("Nothing to restore", result.packages_skipped));
+        stats.append(stat("Shared storage", result.shared_storage_restored ? "restored" : "skipped"));
+        if (result.contacts_import_path) stats.append(stat("Contacts", "in Download, import them", true));
+        if (result.calendar_import_path) stats.append(stat("Calendar", "in Download, open to import", true));
         if (result.wifi_networks_restored >= 0) {
-            lines.push("Wi-Fi networks:    " + result.wifi_networks_restored + " re-added" +
-                (result.wifi_networks_skipped ? ", " + result.wifi_networks_skipped + " skipped" : ""));
+            stats.append(stat("Wi-Fi networks", result.wifi_networks_restored + " re-added" +
+                (result.wifi_networks_skipped ? ", " + result.wifi_networks_skipped + " skipped" : "")));
         }
-        if (result.filesystem_captures_present) {
-            lines.push("Device paths:      " + result.filesystem_captures_present + " present, not restored (copy by hand)");
-        }
+        if (result.filesystem_captures_present) stats.append(stat("Device paths", "copy by hand", true));
     }
-    for (const message of result.messages || []) lines.push("error: " + message);
+    node.append(stats);
 
-    log.append(el("div", { class: "line", text: "" }));
-    for (const line of lines) log.append(el("div", { class: "line", text: line }));
-    log.scrollTop = log.scrollHeight;
+    const skipped = (result.personal_exports || []).filter((item) => item.count < 0);
+    const warnings = (result.warnings || []).concat(skipped.map((item) => item.label + " not exported: " + item.reason));
+    if (warnings.length) {
+        const list = el("ul");
+        for (const warning of warnings) list.append(el("li", { text: warning }));
+        node.append(el("div", { class: "banner warn" }, el("strong", { text: "Before relying on this backup" }), list));
+    }
+    for (const message of result.messages || []) {
+        node.append(el("div", { class: "banner " + (result.cancelled ? "warn" : "bad"), text: message }));
+    }
+    if (job.kind === "backup" && result.output_dir && result.success) {
+        node.append(el("div", { class: "muted mono", style: "margin-bottom:12px", text: "Saved to " + result.output_dir }));
+    }
+
+    if (state.announce) {
+        state.announce = false;
+        const what = job.kind === "backup" ? "Backup" : "Restore";
+        if (job.state === "succeeded") showToast(what + " finished.", "ok");
+        else if (job.state === "cancelled") showToast(what + " cancelled.", "ok");
+        else showToast(what + " failed; see the log.", "error");
+    }
 }
 
 // Polls with a timeout chain rather than setInterval: an interval keeps
