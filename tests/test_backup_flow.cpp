@@ -322,3 +322,85 @@ ABP_TEST(root_restore_refuses_a_corrupted_device_protected_archive) {
     ABP_CHECK(manifest.packages[0].error.find("checksum mismatch") != std::string::npos);
     ABP_CHECK(fixture.readLog().find("tar -xzf") == std::string::npos); // Neither half touched.
 }
+
+namespace {
+
+/// An unrooted Android 14 phone with two apps -- neither debuggable -- one of
+/// them an authenticator, and an SD card.
+const char* kTwoAppPhoneScript = R"SH(
+[ "$1" = "-s" ] && shift 2
+case "$1" in
+  version) exit 0;;
+  devices)
+    echo "List of devices attached"
+    echo "PHONE                  device model:Phone"
+    exit 0;;
+  shell)
+    case "$2" in
+      "id -u") echo 2000; exit 0;;
+      "getprop ro.build.version.sdk") echo 34; exit 0;;
+      getprop*) echo x; exit 0;;
+      "pm list packages"*)
+        echo "package:/data/app/a/base.apk=com.google.android.apps.authenticator2"
+        echo "package:/data/app/b/base.apk=com.example.notes"
+        exit 0;;
+      "sm list-volumes public"*) echo "public:179,1 mounted 1A2B-3C4D"; exit 0;;
+      *"[ -e '/storage/1A2B-3C4D' ]"*) echo yes; exit 0;;
+    esac
+    exit 1;;
+  pull)
+    shift
+    [ "$1" = "-a" ] && shift
+    mkdir -p "$2/DCIM" && echo "jpeg" > "$2/DCIM/photo.jpg"
+    exit 0;;
+esac
+exit 1
+)SH";
+
+} // namespace
+
+ABP_TEST(backup_copies_sd_cards_and_warns_about_what_it_could_not_capture) {
+    FlowFixture fixture(kTwoAppPhoneScript);
+
+    BackupOptions options;
+    options.outputDir = fixture.backupDir();
+    options.includeApks = false;
+    options.assumeYes = true;
+
+    BackupSummary summary = BackupManager::runBackup(options);
+    ABP_CHECK(summary.success);
+
+    // The SD card lands with the raw path captures.
+    ABP_CHECK_EQ(summary.removableStorageCount, 1);
+    Manifest manifest = Manifest::readFromFile(fixture.backupDir() / "manifest.json");
+    ABP_CHECK_EQ(manifest.filesystemCaptures.size(), 1u);
+    ABP_CHECK_EQ(manifest.filesystemCaptures[0].devicePath, "/storage/1A2B-3C4D");
+    ABP_CHECK(fs::exists(fixture.backupDir() / manifest.filesystemCaptures[0].localPath / "DCIM" / "photo.jpg"));
+
+    // Neither app is debuggable and `adb backup` produced nothing, so both
+    // lack data -- and the authenticator is called out by name.
+    ABP_CHECK_EQ(summary.packagesWithoutData, 2);
+    bool mentionsAuthenticator = false;
+    bool mentionsMissingData = false;
+    for (const auto& warning : summary.warnings) {
+        if (warning.find("com.google.android.apps.authenticator2") != std::string::npos) mentionsAuthenticator = true;
+        if (warning.find("could not be captured for 2 app(s)") != std::string::npos) mentionsMissingData = true;
+    }
+    ABP_CHECK(mentionsAuthenticator);
+    ABP_CHECK(mentionsMissingData);
+}
+
+ABP_TEST(backup_leaves_sd_cards_alone_with_no_shared) {
+    FlowFixture fixture(kTwoAppPhoneScript);
+
+    BackupOptions options;
+    options.outputDir = fixture.backupDir();
+    options.includeApks = false;
+    options.includeSharedStorage = false;
+    options.exportPersonalData = false;
+
+    BackupSummary summary = BackupManager::runBackup(options);
+    ABP_CHECK(summary.success);
+    ABP_CHECK_EQ(summary.removableStorageCount, 0);
+    ABP_CHECK(fixture.readLog().find("list-volumes") == std::string::npos);
+}

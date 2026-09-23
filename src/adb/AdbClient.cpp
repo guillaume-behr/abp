@@ -1,5 +1,7 @@
 #include "abp/AdbClient.h"
 
+#include <algorithm>
+#include <cctype>
 #include <cstring>
 #include <sstream>
 
@@ -378,6 +380,40 @@ std::vector<PackageInfo> AdbClient::listPackages(bool includeSystemApps) const {
         result.push_back(std::move(info));
     }
     return result;
+}
+
+std::vector<std::string> AdbClient::removableStorageRoots() const {
+    std::vector<std::string> roots;
+    auto add = [&roots](const std::string& uuid) {
+        // Volume UUIDs are short hex/dash strings; anything else is not a
+        // name `sm` or vold would give a public volume.
+        if (uuid.empty() || uuid.size() > 36) return;
+        for (char c : uuid) {
+            if (!std::isxdigit(static_cast<unsigned char>(c)) && c != '-') return;
+        }
+        const std::string path = "/storage/" + uuid;
+        if (std::find(roots.begin(), roots.end(), path) == roots.end()) roots.push_back(path);
+    };
+
+    // "public:179,1 mounted 1A2B-3C4D" -- only mounted volumes have a path.
+    bool ok = false;
+    const std::string volumes = shellText("sm list-volumes public 2>/dev/null", &ok);
+    if (ok) {
+        for (const auto& rawLine : strutil::split(volumes, '\n')) {
+            std::istringstream fields(strutil::trim(rawLine));
+            std::string id, state, uuid;
+            if (fields >> id >> state >> uuid && strutil::startsWith(id, "public:") && state == "mounted") add(uuid);
+        }
+        return roots;
+    }
+
+    // No `sm` (Android 5 and older): FAT/exFAT volumes mount as XXXX-XXXX.
+    const std::string listing = shellText("ls /storage 2>/dev/null", &ok);
+    for (const auto& rawLine : strutil::split(listing, '\n')) {
+        const std::string name = strutil::trim(rawLine);
+        if (name.size() == 9 && name[4] == '-') add(name);
+    }
+    return roots;
 }
 
 std::string AdbClient::asPackage(const std::string& packageName, const std::string& command) {

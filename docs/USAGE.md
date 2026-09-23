@@ -138,16 +138,20 @@ Notes:
   `/dev` can block indefinitely.
 - **These captures are not restored.** See the restore section below.
 
-### Contacts, SMS and call log
+### Contacts, messages, calendar, settings and Wi-Fi
 
-Every backup also exports your contacts, text messages and call history
-into `personal/`, in formats that open anywhere, with or without root:
+Every backup also exports your personal data into `personal/`, in formats
+that open anywhere:
 
-| File | Contents |
-|---|---|
-| `personal/contacts.vcf` | Every contact as a vCard, as the phone's own "Export" produces it (photos included). Import it into any phone or address book. |
-| `personal/sms.json` | Every SMS: address, date, sent/received, read, text. MMS (picture and group messages) are not included. |
-| `personal/call_log.json` | Incoming, outgoing and missed calls with number, name, date and duration. |
+| File | Contents | Root? |
+|---|---|---|
+| `personal/contacts.vcf` | Every contact as a vCard, as the phone's own "Export" produces it (photos included). Import it into any phone or address book. | No |
+| `personal/sms.json` | Every SMS: address, date, sent/received, read, text. | No |
+| `personal/mms.json` + `mms_parts/` | Picture and group messages: date, conversation participants, text, and each attachment as a file. | No |
+| `personal/call_log.json` | Incoming, outgoing and missed calls with number, name, date and duration. | No |
+| `personal/calendar.ics` | Every calendar event on the phone (including local, unsynced calendars), with recurrence, location and notes. | No |
+| `personal/settings.json` | The system, secure and global settings tables (brightness, ringtones, accessibility, ...). Archival. | No |
+| `personal/wifi.json` | Saved Wi-Fi networks **with their passwords**, plus the raw configuration file. Readable by you only; keep the backup private. | Yes |
 
 They are read through Android's own content providers
 (`adb shell content query`), so how much a device hands over is up to
@@ -158,7 +162,11 @@ reports what was exported:
 ```
   Contacts:        312
   SMS messages:    4821
-  Call log:        not exported
+  MMS messages:    57
+  Call log:        not exported (Permission Denial: ... requires android.permission.READ_CALL_LOG)
+  Calendar events: 140
+  Settings:        412
+  Wi-Fi networks:  not exported (needs root (the passwords are only readable as root))
 ```
 
 In root mode, and with `--system`, the underlying databases are also
@@ -169,6 +177,30 @@ restores contacts and messages exactly, but only onto the same kind of
 device; the exports above work everywhere.
 
 Pass `--no-personal` to skip the exports.
+
+### SD cards
+
+A removable SD card (or USB drive) that is mounted when you back up is
+copied along with shared storage, into `filesystem/storage_<id>/`, and
+listed in `manifest.json` with the other raw path captures. `--no-shared`
+skips it too. Restore does not write it back automatically -- the target
+phone may not have that card -- and prints the `adb push` command to do
+it by hand.
+
+### Warnings at the end of a backup
+
+The summary ends with a *Before relying on this backup* list when
+something important is out of reach:
+
+- **Apps whose secrets are sealed by the phone's hardware** (authenticator
+  apps such as Google Authenticator, Authy or Aegis, Signal, Google
+  Wallet). Their data can be copied, but it will not work on another
+  phone or after a factory reset. Use each app's own export or transfer
+  feature -- for 2FA apps, move your codes -- before wiping the phone.
+  Banking apps generally behave the same way.
+- **How many apps' private data could not be captured** without root, and
+  how many went through legacy `adb backup`, which on Android 12+ is
+  mostly empty.
 
 ### What gets captured
 
@@ -227,13 +259,21 @@ archive that `adb restore` can only write back as a whole. `abp` only
 invokes that restore if at least one selected package needs it, and warns
 when doing so will also restore packages you deselected.
 
-**Contacts come back as a file to import.** `abp restore` copies the
-backup's `contacts.vcf` to `/sdcard/Download/abp-contacts.vcf`; open the
-Contacts app and choose *Settings > Import > .vcf file*. Writing the
-contacts database directly needs root, and a root-mode `--system` backup
-restores it with the other app data anyway. `sms.json` and
-`call_log.json` are not written back: Android only lets the default SMS
-app add messages, so they stay in the backup as a readable archive.
+**Contacts and calendar come back as files to import; Wi-Fi networks are
+re-added.** `abp restore` copies the backup's `contacts.vcf` and
+`calendar.ics` to `/sdcard/Download/` (`abp-contacts.vcf`,
+`abp-calendar.ics`). Import contacts from the Contacts app (*Settings >
+Import > .vcf file*) and open the `.ics` with your calendar app (or
+import it into Google Calendar on the web). On Android 11 and later,
+saved Wi-Fi networks from `wifi.json` are re-added with
+`cmd wifi add-network`; enterprise (802.1X) and WEP networks cannot be
+re-created that way and are reported as skipped. Writing the contacts or
+calendar database directly needs root, and a root-mode `--system` backup
+restores it with the other app data anyway. SMS, MMS, call log and
+settings are not written back: Android only lets the default SMS app add
+messages, and many settings are specific to the device they came from.
+They stay in the backup as a readable archive. `--no-personal` skips all
+of this.
 After restoring system apps' data in root mode, reboot the device
 (`adb reboot`) so the contacts and SMS services reload their databases.
 

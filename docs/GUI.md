@@ -41,7 +41,8 @@ subcommands.
 - **Devices** — everything `adb devices -l` can see, with model, Android
   version and root status. Pick one; backups and restores target it.
 - **Back up** — choose an output directory, what to capture (APKs, app
-  data, shared storage, contacts and messages, system apps, and optionally every device
+  data, shared storage and SD cards, contacts/messages/calendar/settings/Wi-Fi,
+  system apps, and optionally every device
   partition as with `--all-files`), which backend to use, and
   optionally an explicit package list pulled live from the device. The
   same options as `abp backup`, with a confirmation step before anything
@@ -150,9 +151,14 @@ A finished job carries its summary in `job.result`. For a backup that is:
   "shared_storage_included": true,
   "filesystem_capture_count": 0,
   "filesystem_partial_count": 0,
-  "contacts_exported": 312,
-  "sms_exported": 4821,
-  "call_log_exported": -1,
+  "removable_storage_count": 1,
+  "packages_without_data": 26,
+  "personal_exports": [
+    { "kind": "contacts", "label": "Contacts", "count": 312, "reason": "" },
+    { "kind": "wifi", "label": "Wi-Fi networks", "count": -1,
+      "reason": "needs root (the passwords are only readable as root)" }
+  ],
+  "warnings": ["These apps keep secrets sealed by this phone's hardware, ..."],
   "total_bytes": 123456789,
   "total_size_human": "117.74 MB",
   "output_dir": "/home/me/abp-backups/pixel",
@@ -171,14 +177,19 @@ and for a restore:
   "shared_storage_restored": true,
   "filesystem_captures_present": 0,
   "contacts_import_path": "/sdcard/Download/abp-contacts.vcf",
+  "calendar_import_path": "/sdcard/Download/abp-calendar.ics",
+  "wifi_networks_restored": 6,
+  "wifi_networks_skipped": 1,
   "messages": []
 }
 ```
 
-The `*_exported` counts are `-1` for a kind that was not exported (turned
-off, or refused by the device). A restore request takes
-`include_personal` too, to control whether `contacts.vcf` is copied to
-the device for import.
+In `personal_exports`, `count` is `-1` for a kind that was not exported,
+with the reason. `warnings` lists coverage caveats (hardware-sealed apps,
+app data out of reach). `wifi_networks_restored` is `-1` when no Wi-Fi
+restore was attempted. A restore request takes `include_personal` too, to
+control whether contacts and calendar are copied to the device and Wi-Fi
+networks re-added.
 
 `packages_skipped` counts packages that were selected but that the backup
 held nothing to write back for — no APK and no captured data. They are

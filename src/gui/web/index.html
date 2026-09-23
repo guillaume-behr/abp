@@ -254,7 +254,7 @@ dialog::backdrop { background: rgba(0,0,0,.5); }
             <label class="toggle"><input type="checkbox" id="b-apks" checked><span><span class="t">APKs</span><small>base + split APK files</small></span></label>
             <label class="toggle"><input type="checkbox" id="b-data" checked><span><span class="t">App data</span><small>private per-app data</small></span></label>
             <label class="toggle"><input type="checkbox" id="b-shared" checked><span><span class="t">Shared storage</span><small>/sdcard photos, downloads…</small></span></label>
-            <label class="toggle"><input type="checkbox" id="b-personal" checked><span><span class="t">Contacts &amp; messages</span><small>contacts (vCard), SMS, call log</small></span></label>
+            <label class="toggle"><input type="checkbox" id="b-personal" checked><span><span class="t">Contacts &amp; messages</span><small>contacts, SMS/MMS, calls, calendar, settings, Wi-Fi (root)</small></span></label>
             <label class="toggle"><input type="checkbox" id="b-system"><span><span class="t">System apps</span><small>off by default</small></span></label>
             <label class="toggle"><input type="checkbox" id="b-all-files"><span><span class="t">Device partitions</span><small>raw <span class="mono">adb pull</span> of /data, /system, … (large)</small></span></label>
         </div>
@@ -313,7 +313,7 @@ dialog::backdrop { background: rgba(0,0,0,.5); }
             <label class="toggle"><input type="checkbox" id="r-apks" checked><span><span class="t">APKs</span><small>reinstall apps</small></span></label>
             <label class="toggle"><input type="checkbox" id="r-data" checked><span><span class="t">App data</span><small>overwrites existing data</small></span></label>
             <label class="toggle"><input type="checkbox" id="r-shared" checked><span><span class="t">Shared storage</span><small>pushes /sdcard back</small></span></label>
-            <label class="toggle"><input type="checkbox" id="r-personal" checked><span><span class="t">Contacts</span><small>copies the vCard to Download for import</small></span></label>
+            <label class="toggle"><input type="checkbox" id="r-personal" checked><span><span class="t">Contacts, calendar &amp; Wi-Fi</span><small>files to import, networks re-added</small></span></label>
         </div>
     </div>
 
@@ -924,7 +924,8 @@ async function openBackup(path) {
 }
 
 function personalLabel(item) {
-    const noun = { contacts: "contacts", sms: "SMS", call_log: "calls" }[item.kind] || item.kind;
+    const noun = { contacts: "contacts", sms: "SMS", mms: "MMS", call_log: "calls", calendar: "events",
+        settings: "settings", wifi: "Wi-Fi networks" }[item.kind] || item.kind;
     return item.item_count + " " + noun;
 }
 
@@ -1067,16 +1068,21 @@ function appendResult(job) {
         if (result.packages_via_legacy_backup) lines.push("  via adb backup: " + result.packages_via_legacy_backup + " (partial; apps may have opted out)");
         lines.push("Errors:         " + (result.packages_with_errors ?? 0));
         lines.push("Shared storage: " + (result.shared_storage_included ? "included" : "skipped"));
-        const exported = (n) => (n === undefined || n < 0) ? "not exported" : String(n);
-        lines.push("Contacts:       " + exported(result.contacts_exported));
-        lines.push("SMS messages:   " + exported(result.sms_exported));
-        lines.push("Call log:       " + exported(result.call_log_exported));
+        if (result.removable_storage_count) lines.push("SD cards:       " + result.removable_storage_count + " copied");
+        for (const item of result.personal_exports || []) {
+            lines.push((item.label + ":").padEnd(16) + (item.count < 0 ? "not exported (" + item.reason + ")" : String(item.count)));
+        }
         if (result.filesystem_capture_count) {
             lines.push("Device paths:   " + result.filesystem_capture_count + " pulled" +
                 (result.filesystem_partial_count ? " (" + result.filesystem_partial_count + " only partially readable)" : ""));
         }
         lines.push("Total size:     " + (result.total_size_human || "0 B"));
         lines.push("Output:         " + (result.output_dir || job.target));
+        if ((result.warnings || []).length) {
+            lines.push("");
+            lines.push("Before relying on this backup:");
+            for (const warning of result.warnings) lines.push("  - " + warning);
+        }
     } else {
         lines.push("Packages restored: " + (result.packages_restored ?? 0));
         lines.push("Packages failed:   " + (result.packages_failed ?? 0));
@@ -1084,6 +1090,13 @@ function appendResult(job) {
         lines.push("Shared storage:    " + (result.shared_storage_restored ? "restored" : "skipped"));
         if (result.contacts_import_path) {
             lines.push("Contacts:          copied to " + result.contacts_import_path + " (Contacts > Settings > Import)");
+        }
+        if (result.calendar_import_path) {
+            lines.push("Calendar:          copied to " + result.calendar_import_path + " (open it to import)");
+        }
+        if (result.wifi_networks_restored >= 0) {
+            lines.push("Wi-Fi networks:    " + result.wifi_networks_restored + " re-added" +
+                (result.wifi_networks_skipped ? ", " + result.wifi_networks_skipped + " skipped" : ""));
         }
         if (result.filesystem_captures_present) {
             lines.push("Device paths:      " + result.filesystem_captures_present + " present, not restored (copy by hand)");

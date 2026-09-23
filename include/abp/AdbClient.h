@@ -132,6 +132,12 @@ public:
     /// with the number of packages.
     std::vector<std::string> packagesSupportingRunAs(const std::vector<std::string>& packageNames) const;
 
+    /// Mount points of removable storage (physical SD cards, USB drives),
+    /// e.g. "/storage/1A2B-3C4D". Internal shared storage (/sdcard) is not
+    /// included. Asks `sm list-volumes public` first and falls back to
+    /// recognising volume-UUID directories under /storage.
+    std::vector<std::string> removableStorageRoots() const;
+
     /// Wraps `command` so it runs as `packageName`'s UID via `run-as`. The
     /// caller is responsible for having checked packagesSupportingRunAs().
     static std::string asPackage(const std::string& packageName, const std::string& command);

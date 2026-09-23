@@ -474,3 +474,33 @@ ABP_TEST(adb_pins_the_one_ready_device_when_no_serial_is_given) {
     ABP_CHECK_EQ(AdbClient("").pinned().serial(), std::string("GOODDEV"));
     ABP_CHECK_EQ(AdbClient("OFFLINEDEV").pinned().serial(), std::string("OFFLINEDEV"));
 }
+
+ABP_TEST(adb_finds_mounted_removable_storage) {
+    FakeAdb fake(R"SH(
+shift $(( $# - 1 ))
+case "$1" in
+  "sm list-volumes public"*)
+    echo "public:179,1 mounted 1A2B-3C4D"
+    echo "public:8,1 unmounted 9999-0000"
+    echo "public:8,17 mounted not/a/uuid"
+    exit 0;;
+esac
+exit 1
+)SH");
+    auto roots = AdbClient("SERIAL").removableStorageRoots();
+    ABP_CHECK_EQ(roots.size(), 1u);
+    ABP_CHECK_EQ(roots[0], "/storage/1A2B-3C4D");
+}
+
+ABP_TEST(adb_falls_back_to_listing_storage_without_sm) {
+    FakeAdb fake(R"SH(
+shift $(( $# - 1 ))
+case "$1" in
+  "ls /storage"*) printf 'emulated\nself\nABCD-1234\nsdcard0\n'; exit 0;;
+esac
+exit 1
+)SH");
+    auto roots = AdbClient("SERIAL").removableStorageRoots();
+    ABP_CHECK_EQ(roots.size(), 1u);
+    ABP_CHECK_EQ(roots[0], "/storage/ABCD-1234");
+}

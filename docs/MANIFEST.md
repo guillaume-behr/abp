@@ -15,7 +15,12 @@ DIR/
   personal/                         (unless --no-personal)
     contacts.vcf                      (every contact, vCard)
     sms.json                          (SMS messages)
+    mms.json                          (MMS messages)
+    mms_parts/                        (MMS attachments, one file per part)
     call_log.json                     (call history)
+    calendar.ics                      (calendar events, iCalendar)
+    settings.json                     (system/secure/global settings)
+    wifi.json, wifi_<store file>      (root only; saved networks and passwords)
   shared_storage.tar                (root mode; single tar of /sdcard)
   shared_storage/                   (standard mode; plain directory tree, pulled via adb pull)
   filesystem/                       (--all-files / --pull-path; one directory per captured path)
@@ -69,8 +74,8 @@ backup directory is self-contained and can be moved/copied as a whole.
   // Only the kinds the device allowed abp to read are listed.
   "personal_data_exports": [
     {
-      "kind": "contacts",               // contacts | sms | call_log
-      "format": "vcard",                // vcard | json
+      "kind": "contacts",               // contacts | sms | mms | call_log | calendar | settings | wifi
+      "format": "vcard",                // vcard | json | icalendar
       "local_path": "personal/contacts.vcf",
       "item_count": 312,
       "bytes": 104857,
@@ -141,12 +146,15 @@ Notes:
   `com.android.providers.telephony` lives there. Empty when the package
   has no such directory.
 - `personal_data_exports` are portable copies, not app data: contacts as
-  a vCard file any contacts app can import, SMS and call log as JSON.
-  They are read without root through Android's content providers, so a
-  kind is missing when the device refused access to it. `abp restore`
-  copies `contacts.vcf` to the device's `Download` folder for you to
-  import; SMS and call log are archival, because Android only lets the
-  default SMS app write messages.
+  a vCard file any contacts app can import, calendar events as
+  iCalendar, SMS/MMS/call log/settings as JSON, and -- with root -- Wi-Fi
+  networks as JSON. Everything but Wi-Fi is read without root, through
+  Android's content providers and `settings`, so a kind is missing when
+  the device refused access to it. `abp restore` copies `contacts.vcf`
+  and `calendar.ics` to the device's `Download` folder for you to import
+  and re-adds Wi-Fi networks (Android 11+); the rest is archival.
+- A mounted SD card is recorded in `filesystem_captures` with a
+  `/storage/<id>` device path.
 - `external_data_included`/`external_data_archive*` fields are reserved
   for a future capture of `/sdcard/Android/data/<pkg>` (per-app external
   storage); they are always empty/false today.

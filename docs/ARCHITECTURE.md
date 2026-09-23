@@ -80,13 +80,16 @@ backend's job.
 
 ## PersonalData
 
-Exports contacts (vCard), SMS and call log (JSON) through Android's
-content providers with `adb shell content`, independently of the backend:
-it needs no root and runs in both modes. `parseContentQuery()` turns the
+Exports contacts (vCard), SMS/MMS and call log (JSON), calendar events
+(iCalendar) and settings through Android's content providers and
+`settings`, independently of the backend: it needs no root and runs in
+both modes. Given root it also exports saved Wi-Fi networks, which
+restore re-adds with `cmd wifi add-network`. `parseContentQuery()` turns the
 tool's unescaped `Row: n col=value, ...` output into rows by relying on
 the known projection, with the one free-text column placed last. The
 exports are recorded in the manifest's `personal_data_exports`; on
-restore only `contacts.vcf` is copied back, for the user to import.
+restore contacts and calendar are copied to the device for the user to
+import, and the rest is archival.
 
 ## IBackupBackend
 

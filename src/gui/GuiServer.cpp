@@ -410,9 +410,21 @@ JsonValue backupSummaryResultJson(const BackupSummary& summary) {
     object.set("shared_storage_included", summary.sharedStorageIncluded);
     object.set("filesystem_capture_count", summary.filesystemCaptureCount);
     object.set("filesystem_partial_count", summary.filesystemPartialCount);
-    object.set("contacts_exported", summary.contactsExported);
-    object.set("sms_exported", summary.smsExported);
-    object.set("call_log_exported", summary.callLogExported);
+    object.set("removable_storage_count", summary.removableStorageCount);
+    object.set("packages_without_data", summary.packagesWithoutData);
+    JsonValue personal = JsonValue::makeArray();
+    for (const auto& item : summary.personalExports) {
+        JsonValue entry = JsonValue::makeObject();
+        entry.set("kind", item.kind);
+        entry.set("label", item.label);
+        entry.set("count", item.count);
+        entry.set("reason", item.reason);
+        personal.push_back(entry);
+    }
+    object.set("personal_exports", personal);
+    JsonValue warnings = JsonValue::makeArray();
+    for (const auto& warning : summary.warnings) warnings.push_back(warning);
+    object.set("warnings", warnings);
     object.set("total_bytes", summary.totalBytes);
     object.set("total_size_human", strutil::formatBytes(summary.totalBytes));
     object.set("output_dir", summary.outputDir.string());
@@ -430,7 +442,10 @@ JsonValue restoreSummaryResultJson(const RestoreSummary& summary) {
     object.set("packages_skipped", summary.packagesSkipped);
     object.set("shared_storage_restored", summary.sharedStorageRestored);
     object.set("filesystem_captures_present", summary.filesystemCapturesPresent);
-    object.set("contacts_import_path", summary.contactsImportPath);
+    object.set("contacts_import_path", summary.personal.contactsPath);
+    object.set("calendar_import_path", summary.personal.calendarPath);
+    object.set("wifi_networks_restored", summary.personal.wifiRestored);
+    object.set("wifi_networks_skipped", summary.personal.wifiSkipped);
     JsonValue messages = JsonValue::makeArray();
     for (const auto& message : summary.messages) messages.push_back(message);
     object.set("messages", messages);

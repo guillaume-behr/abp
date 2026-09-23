@@ -87,6 +87,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Download folder for import; SMS and call log are archival, since only
   the default SMS app may write messages. `--no-personal` turns both off;
   the GUI has matching toggles and shows the exports when exploring.
+- **More personal data exported**: MMS with their attachments
+  (`personal/mms.json`, `mms_parts/`), calendar events as iCalendar
+  (`personal/calendar.ics`, local calendars included), and the system,
+  secure and global settings (`personal/settings.json`), all without
+  root. With root, saved Wi-Fi networks and their passwords
+  (`personal/wifi.json`, owner-readable only).
+- **Restore re-adds Wi-Fi networks** with `cmd wifi add-network` on
+  Android 11+, and copies `calendar.ics` next to `contacts.vcf` in the
+  device's Download folder for import.
+- **Removable SD cards are backed up**: mounted public volumes (found
+  with `sm list-volumes`) are copied with shared storage and recorded as
+  path captures; restore prints the command to put them back.
+- **Coverage warnings**: a backup now ends with what it could not
+  capture -- apps whose secrets are sealed by the phone's hardware
+  (authenticators, Signal, Google Wallet) and how many apps' data was out
+  of reach without root or likely empty in legacy `adb backup` -- in the
+  CLI summary, the GUI, and the API (`warnings`, `packages_without_data`).
 - **Root mode captures device-protected app data**
   (`/data/user_de/0/<pkg>`, as `data/<pkg>.de.tar.gz`) and restores it
   with its own owner. That is where Android keeps the SMS database since

@@ -221,6 +221,72 @@ void captureFilesystem(const AdbClient& adb, const fs::path& outDir, const std::
     }
 }
 
+/// Apps whose important secrets (2FA seeds, message keys, banking
+/// credentials) are typically sealed by the phone's hardware keystore. Their
+/// data files can be copied, but on another phone -- or after a factory
+/// reset -- the keys they were encrypted with are gone.
+const std::vector<std::string>& hardwareBoundApps() {
+    static const std::vector<std::string> kApps = {
+        "com.google.android.apps.authenticator2", // Google Authenticator
+        "com.azure.authenticator",                // Microsoft Authenticator
+        "com.authy.authy",                        // Twilio Authy
+        "com.twofasapp",                          // 2FAS
+        "com.beemdevelopment.aegis",              // Aegis
+        "org.fedorahosted.freeotp",               // FreeOTP
+        "org.liberty.android.freeotpplus",        // FreeOTP+
+        "org.shadowice.flocke.andotp",            // andOTP
+        "me.jmh.authenticatorpro",                // Authenticator Pro
+        "com.duosecurity.duomobile",              // Duo Mobile
+        "com.lastpass.authenticator",             // LastPass Authenticator
+        "com.okta.android.auth",                  // Okta Verify
+        "com.yubico.yubioath",                    // Yubico Authenticator
+        "com.bitwarden.authenticator",            // Bitwarden Authenticator
+        "org.thoughtcrime.securesms",             // Signal
+        "com.google.android.apps.walletnfcrel",   // Google Wallet
+    };
+    return kApps;
+}
+
+/// Tells the user, at the end of a backup, what it cannot be relied on for.
+/// A backup that silently lacks most apps' data looks exactly like a
+/// complete one until the day it is restored.
+void reportCoverage(const BackupOptions& options, const DeviceInfo& device, const Manifest& manifest,
+                    BackupSummary& summary) {
+    std::vector<std::string> sealed;
+    int withoutData = 0;
+    int legacy = 0;
+    for (const auto& entry : manifest.packages) {
+        if (contains(hardwareBoundApps(), entry.name)) sealed.push_back(entry.name);
+        if (entry.dataCaptureMethod == DataCaptureMethod::LegacyAdbBackup) ++legacy;
+        else if (!entry.dataIncluded && !entry.isSystemApp) ++withoutData;
+    }
+
+    if (!sealed.empty()) {
+        summary.warnings.push_back(
+            "These apps keep secrets sealed by this phone's hardware, so their data will not work on another "
+            "phone or after a factory reset: " + strutil::join(sealed, ", ") +
+            ". Use each app's own export or transfer feature (for 2FA apps: export or move your codes) before "
+            "wiping this phone.");
+    }
+
+    if (options.includeAppData && manifest.mode == "standard") {
+        summary.packagesWithoutData = withoutData + (device.sdkInt >= 31 ? legacy : 0);
+        if (withoutData > 0) {
+            summary.warnings.push_back(
+                "Private data (logins, settings, in-app content) could not be captured for " +
+                std::to_string(withoutData) + " app(s): without root, Android only lets abp read apps built as "
+                "debuggable. Their APKs are saved; their data needs each app's own backup, or a rooted device.");
+        }
+        if (legacy > 0 && device.sdkInt >= 31) {
+            summary.warnings.push_back(
+                std::to_string(legacy) + " app(s) went through legacy 'adb backup', which on Android 12 and later "
+                "contains data only for the few apps that opt in. Expect most of them to come back empty.");
+        }
+    }
+
+    for (const auto& warning : summary.warnings) Logger::warn(warning);
+}
+
 std::unique_ptr<IBackupBackend> chooseBackupBackend(const BackupOptions& options, const DeviceInfo& device) {
     bool useRoot;
     switch (options.mode) {
@@ -340,20 +406,32 @@ BackupSummary BackupManager::runBackup(const BackupOptions& options) {
     }
 
     if (options.exportPersonalData) {
-        Logger::info("Exporting contacts, SMS and call log...");
-        const personal::ExportCounts counts = personal::exportPersonalData(adb, options.outputDir, manifest);
-        summary.contactsExported = counts.contacts;
-        summary.smsExported = counts.sms;
-        summary.callLogExported = counts.callLog;
+        Logger::info("Exporting contacts, messages, call log, calendar and settings...");
+        summary.personalExports = personal::exportPersonalData(adb, options.outputDir, device, manifest);
     }
 
-    if (!options.filesystemPaths.empty()) {
+    // Removable SD cards are the user's files as much as /sdcard is, so they
+    // come with shared storage. They are recorded as raw path captures:
+    // restoring onto a phone that may not even have that card is left to
+    // the user.
+    std::vector<std::string> capturePaths = options.filesystemPaths;
+    if (options.includeSharedStorage) {
+        for (const auto& root : adb.removableStorageRoots()) {
+            Logger::info("Found removable storage at " + root + "; it will be copied too.");
+            capturePaths.push_back(root);
+            ++summary.removableStorageCount;
+        }
+    }
+
+    if (!capturePaths.empty()) {
         // `adb pull` transfers as whatever user adbd runs as. A `su` binary
         // cannot change that: su elevates commands run through the shell,
         // while pull is a separate file-transfer service. So on a Magisk-style
         // device this capture is no more complete than on an unrooted one,
         // and saying so beats letting the "root mode" banner imply otherwise.
-        if (device.root.method == RootMethod::SuBinary) {
+        if (options.filesystemPaths.empty()) {
+            // Only SD cards: readable by the shell user, nothing to warn about.
+        } else if (device.root.method == RootMethod::SuBinary) {
             Logger::warn("This device is rooted through a 'su' binary, but 'adb pull' transfers as the adb user, "
                           "which 'su' cannot elevate. Paths like /data will be captured only in part. Run "
                           "'adb root' first for a complete capture.");
@@ -363,7 +441,7 @@ BackupSummary BackupManager::runBackup(const BackupOptions& options) {
         }
 
         Logger::info("Pulling device filesystem paths...");
-        captureFilesystem(adb, options.outputDir, options.filesystemPaths, summary.sharedStorageIncluded, manifest);
+        captureFilesystem(adb, options.outputDir, capturePaths, summary.sharedStorageIncluded, manifest);
         summary.filesystemCaptureCount = static_cast<int>(manifest.filesystemCaptures.size());
         for (const auto& capture : manifest.filesystemCaptures) {
             if (!capture.complete) ++summary.filesystemPartialCount;
@@ -393,6 +471,8 @@ BackupSummary BackupManager::runBackup(const BackupOptions& options) {
             case DataCaptureMethod::None: break;
         }
     }
+    reportCoverage(options, device, manifest, summary);
+
     // Measure the directory rather than summing the manifest's archive sizes:
     // that way APKs and the legacy .ab file are counted too.
     summary.totalBytes = fsutil::directorySize(options.outputDir);
@@ -488,25 +568,12 @@ RestoreSummary BackupManager::runRestore(const RestoreOptions& options) {
         summary.sharedStorageRestored = backend->restoreSharedStorage(adb, options.inputDir, manifest);
     }
 
-    // Contacts come back as a vCard for the user to import: writing the
-    // contacts provider's database directly is only possible with root, and
-    // a root-mode backup of it is restored with the other app data anyway.
-    // SMS and call log are archival -- only the default SMS app may write
-    // messages -- so they are just reported.
+    // Contacts and calendar come back as files for the user to import, and
+    // Wi-Fi networks are re-added; writing the providers' databases directly
+    // needs root, and a root-mode backup of them is restored with the other
+    // app data anyway. Messages, call log and settings are archival.
     if (options.includePersonalData && !manifest.personalDataExports.empty()) {
-        summary.contactsImportPath = personal::pushContactsForImport(adb, options.inputDir, manifest);
-        if (!summary.contactsImportPath.empty()) {
-            Logger::info("Copied the contacts export to " + summary.contactsImportPath +
-                         ". To import it, open the Contacts app, choose Settings > Import > .vcf file, and pick "
-                         "Download/abp-contacts.vcf.");
-        }
-        for (const auto& item : manifest.personalDataExports) {
-            if (item.kind == "sms" || item.kind == "call_log") {
-                Logger::info("The backup's " + item.localPath + " (" + std::to_string(item.itemCount) + " " +
-                             (item.kind == "sms" ? "messages" : "calls") +
-                             ") is a readable archive; Android does not let abp write it back.");
-            }
-        }
+        summary.personal = personal::restorePersonalData(adb, options.inputDir, manifest, device.sdkInt);
     }
 
     // Filesystem captures are deliberately not pushed back. They are raw
@@ -521,6 +588,15 @@ RestoreSummary BackupManager::runRestore(const RestoreOptions& options) {
                       " raw device path capture(s) under '" + (options.inputDir / "filesystem").string() +
                       "'. abp does not push these back: restoring whole partitions over a running system "
                       "is not safe to automate. Copy what you need from them by hand.");
+        for (const auto& capture : manifest.filesystemCaptures) {
+            if (strutil::startsWith(capture.devicePath, "/storage/") &&
+                !strutil::startsWith(capture.devicePath, "/storage/emulated")) {
+                Logger::info("SD card contents from " + capture.devicePath + " are in '" +
+                             (options.inputDir / capture.localPath).string() +
+                             "'. To put them back, insert a card and run: adb push '" +
+                             (options.inputDir / capture.localPath).string() + "/.' /storage/<card-id>/");
+            }
+        }
     }
 
     // "Restored" means something was actually written back for the package.

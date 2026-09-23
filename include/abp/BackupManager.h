@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "abp/BackupOptions.h"
+#include "abp/PersonalData.h"
 
 namespace abp {
 
@@ -28,11 +29,22 @@ struct BackupSummary {
     int filesystemCaptureCount = 0;
     int filesystemPartialCount = 0;
 
-    /// Items exported per kind; -1 when that kind was not exported (not
-    /// requested, or the device refused access).
-    int contactsExported = -1;
-    int smsExported = -1;
-    int callLogExported = -1;
+    /// Removable SD cards / USB drives found and pulled (counted in
+    /// filesystemCaptureCount too).
+    int removableStorageCount = 0;
+
+    /// One entry per kind of personal data (contacts, SMS, ...), empty when
+    /// --no-personal was given.
+    std::vector<personal::ExportResult> personalExports;
+
+    /// Packages whose private data could not be captured at all, and those
+    /// that went through legacy `adb backup`, which on Android 12+ holds data
+    /// only for apps that opt in.
+    int packagesWithoutData = 0;
+
+    /// Coverage caveats worth reading before relying on this backup (apps
+    /// with hardware-bound secrets, app data out of reach, ...). Not errors.
+    std::vector<std::string> warnings;
 
     unsigned long long totalBytes = 0;
     std::filesystem::path outputDir;
@@ -53,8 +65,8 @@ struct RestoreSummary {
     /// never writes them back -- see the note in runRestore().
     int filesystemCapturesPresent = 0;
 
-    /// Where contacts.vcf was copied on the device for import; empty if not.
-    std::string contactsImportPath;
+    /// What was done with the backup's personal data exports.
+    personal::RestoreResult personal;
 
     std::vector<std::string> messages;
 };

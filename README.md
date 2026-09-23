@@ -70,7 +70,9 @@ files. `abp` gives you a single tool that:
 | **Full restore** | Reinstalls APKs, restores app data with UID remapping + SELinux relabeling, restores shared storage. |
 | **Root backend** | Streams `tar` archives of each app's data directory (and of `/sdcard`) over `adb exec-out`/`shell` — never buffers large data in host memory. |
 | **Standard backend** | No root required: per-app `tar` via `run-as` for debuggable apps, legacy `adb backup` for the rest, `adb pull`/`push` for shared storage. |
-| **Contacts, SMS & call log** | Exported to vCard and JSON without root, readable and importable anywhere; with root, the providers' databases are captured whole too. |
+| **Personal data** | Contacts (vCard), SMS/MMS with attachments, call log, calendar (iCalendar) and settings exported without root; Wi-Fi networks with passwords with root, re-added on restore. |
+| **SD cards** | Mounted removable storage is copied along with shared storage. |
+| **Coverage warnings** | Every backup ends by naming what it could not capture: hardware-sealed apps (authenticators, Signal), and apps whose data needs root. |
 | **Whole-partition pull** | `--all-files` / `--pull-path` copy device paths verbatim via `adb pull`, recording what was readable. |
 | **Web GUI** | `abp gui` — a local, dependency-free web app for backing up, restoring and exploring backups. |
 | **Selective ops** | `--only`, `--exclude`, `--no-apks`, `--no-data`, `--no-shared`, `--no-personal`, `--system`. |
@@ -94,7 +96,12 @@ coverage varies app by app rather than all-or-nothing:
 | **Private app data, device-protected** (`/data/user_de/0/<pkg>`) | Complete, every app | No | No |
 | **Shared storage** (`/sdcard`: photos, videos, downloads) | Single `tar` stream | `adb pull` tree | `adb pull` tree |
 | **Contacts** | vCard export; database too with `--system` | vCard export | vCard export |
-| **SMS / call log** | JSON export; SMS database too with `--system` | JSON export | JSON export |
+| **SMS, MMS, call log** | JSON export; SMS database too with `--system` | JSON export | JSON export |
+| **Calendar** | `.ics` export | `.ics` export | `.ics` export |
+| **Settings** | JSON export (archival) | JSON export (archival) | JSON export (archival) |
+| **Wi-Fi networks + passwords** | Exported, re-added on restore | No | No |
+| **Removable SD card** | Copied | Copied | Copied |
+| **Authenticator / 2FA secrets, Signal** | Copied, but sealed by the phone's hardware -- useless on another phone | No | No |
 | **Per-app archives** | One per package | One per package | No — one shared `.ab` archive |
 | **Selective restore** (`--only`/`--exclude`) | Per package | Per package | No — archive restores as a whole |
 | **SHA-256 integrity check** | Yes | Yes | No — not available for `adb backup` output |
@@ -102,12 +109,12 @@ coverage varies app by app rather than all-or-nothing:
 | **Correct UID/SELinux on restore** | Remapped + `restorecon` | Inherent — `tar` runs as the app | Handled by Android |
 | **System apps** | With `--system` | APKs only (system apps are not debuggable) | APKs only |
 | **Whole partitions** (`--all-files`) | All of `/data`, `/system`, ... | Readable parts only — most of `/data` is root-only | Readable parts only |
-| **OS state** (Wi-Fi, accounts, settings) | Out of scope | Out of scope | Out of scope |
+| **Accounts, eSIM, other users / work profile** | Out of scope | Out of scope | Out of scope |
 
 Contacts, SMS and call log are exported through Android's content
 providers, so each kind depends on the device letting the adb shell read
-it; one it refuses is skipped with a warning. MMS are not exported. See
-[USAGE.md](docs/USAGE.md#contacts-sms-and-call-log).
+it; one it refuses is skipped with a warning. See
+[USAGE.md](docs/USAGE.md#contacts-messages-calendar-settings-and-wi-fi).
 
 **How an app lands in each non-root column.** `run-as` runs a command as
 an app's own UID, which Android permits only for apps built with

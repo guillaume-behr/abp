@@ -41,8 +41,9 @@ Backup options:
       --system            Include system apps (default: third-party apps only).
       --no-apks           Skip extracting APK files.
       --no-data           Skip app data (root: per-app tar; standard: legacy adb backup).
-      --no-shared         Skip /sdcard (shared storage / media).
-      --no-personal       Skip exporting contacts (vCard), SMS and call log (JSON).
+      --no-shared         Skip /sdcard (shared storage / media) and removable SD cards.
+      --no-personal       Skip exporting contacts, SMS/MMS, call log, calendar, settings
+                          and (with root) Wi-Fi networks.
       --only PKGS         Comma-separated package names to include, all others excluded.
       --exclude PKGS      Comma-separated package names to exclude.
       --root              Require root; fail if unavailable.
@@ -70,7 +71,7 @@ Restore options:
       --no-apks           Do not reinstall APKs.
       --no-data           Do not restore app data.
       --no-shared         Do not restore shared storage.
-      --no-personal       Do not copy the contacts export to the device for import.
+      --no-personal       Do not copy contacts/calendar to the device or re-add Wi-Fi networks.
       --only PKGS         Comma-separated package names to restore.
       --exclude PKGS      Comma-separated package names to skip.
   -y, --yes               Do not prompt for confirmation.
@@ -277,10 +278,15 @@ int cmdBackup(const std::vector<std::string>& args) {
 
     std::cout << "  Errors:          " << summary.packagesWithErrors << "\n";
     std::cout << "  Shared storage:  " << (summary.sharedStorageIncluded ? "included" : "skipped") << "\n";
-    auto exported = [](int count) { return count < 0 ? std::string("not exported") : std::to_string(count); };
-    std::cout << "  Contacts:        " << exported(summary.contactsExported) << "\n";
-    std::cout << "  SMS messages:    " << exported(summary.smsExported) << "\n";
-    std::cout << "  Call log:        " << exported(summary.callLogExported) << "\n";
+    if (summary.removableStorageCount > 0) {
+        std::cout << "  SD cards:        " << summary.removableStorageCount << " copied\n";
+    }
+    for (const auto& item : summary.personalExports) {
+        std::string label = item.label + ":";
+        label.resize(17, ' ');
+        std::cout << "  " << label
+                  << (item.count < 0 ? "not exported (" + item.reason + ")" : std::to_string(item.count)) << "\n";
+    }
     if (summary.filesystemCaptureCount > 0) {
         std::cout << "  Device paths:    " << summary.filesystemCaptureCount << " pulled";
         if (summary.filesystemPartialCount > 0) {
@@ -290,6 +296,10 @@ int cmdBackup(const std::vector<std::string>& args) {
     }
     std::cout << "  Total size:      " << strutil::formatBytes(summary.totalBytes) << "\n";
     std::cout << "  Output:          " << summary.outputDir.string() << "\n";
+    if (!summary.warnings.empty()) {
+        std::cout << "\nBefore relying on this backup:\n";
+        for (const auto& warning : summary.warnings) std::cout << "  - " << warning << "\n";
+    }
     return 0;
 }
 
@@ -351,8 +361,16 @@ int cmdRestore(const std::vector<std::string>& args) {
                    << " (no APK and no data in the backup)\n";
     }
     std::cout << "  Shared storage:    " << (summary.sharedStorageRestored ? "restored" : "skipped") << "\n";
-    if (!summary.contactsImportPath.empty()) {
-        std::cout << "  Contacts:          copied to " << summary.contactsImportPath << " (import it in Contacts)\n";
+    if (!summary.personal.contactsPath.empty()) {
+        std::cout << "  Contacts:          copied to " << summary.personal.contactsPath << " (import it in Contacts)\n";
+    }
+    if (!summary.personal.calendarPath.empty()) {
+        std::cout << "  Calendar:          copied to " << summary.personal.calendarPath << " (open it to import)\n";
+    }
+    if (summary.personal.wifiRestored >= 0) {
+        std::cout << "  Wi-Fi networks:    " << summary.personal.wifiRestored << " re-added";
+        if (summary.personal.wifiSkipped > 0) std::cout << ", " << summary.personal.wifiSkipped << " skipped";
+        std::cout << "\n";
     }
     if (summary.filesystemCapturesPresent > 0) {
         std::cout << "  Device paths:      " << summary.filesystemCapturesPresent
